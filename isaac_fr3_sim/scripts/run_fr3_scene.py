@@ -1,0 +1,821 @@
+#!/usr/bin/env python3
+"""Minimal Isaac Sim runner for the converted FR3 USD asset."""
+import argparse
+import math
+import os
+import sys
+import time
+
+
+ARM_JOINTS = ("j1", "j2", "j3", "j4", "j5", "j6")
+MAX_SAFE_ARM_ABS_RAD = 2.0 * math.pi
+ACTUAL_LIMIT_GRACE_RAD = 0.1
+JOINT_TRAJECTORY_TOPIC = "/fairino3_controller/joint_trajectory"
+GRIPPER_MASTER_JOINT = "robotiq_85_left_knuckle_joint"
+GRIPPER_COMMAND_TOPIC = "/robotiq_gripper_controller/position_command"
+GRIPPER_STATE_TOPIC = "/robotiq_gripper_controller/position_state"
+GRIPPER_MASTER_DRIVE = (20.0, 300.0, 50.0)
+GRIPPER_MAX_VELOCITY_RAD_S = 0.5
+GRIPPER_LIMIT_DEG = math.degrees(0.8)
+
+# PhysX revolute-drive gains.  The converted USD has angular DriveAPI schemas
+# but no stiffness/damping, so position targets otherwise produce no torque.
+ARM_DRIVES = {
+    # The shoulder links sagged by about 0.02 rad under gravity with the
+    # original gains, exceeding FollowJointTrajectory's final tolerance.
+    "j1": (250.0, 5_000.0, 400.0),
+    "j2": (250.0, 5_000.0, 400.0),
+    "j3": (250.0, 5_000.0, 400.0),
+    "j4": (120.0, 4_000.0, 300.0),
+    "j5": (120.0, 4_000.0, 300.0),
+    "j6": (120.0, 4_000.0, 300.0),
+}
+
+
+class TrajectoryExecutor:
+    """Validate and interpolate one position-only JointTrajectory at a time."""
+
+    def __init__(self, joint_limits):
+        self.joint_limits = joint_limits
+        self.start_time = None
+        self.start_positions = None
+        self.points = ()
+
+    def submit(self, message, now, current_positions):
+        names = tuple(message.joint_names)
+        if len(names) != len(ARM_JOINTS) or set(names) != set(ARM_JOINTS):
+            return "joint_names must contain exactly j1 through j6 (no gripper joints)"
+        if len(set(names)) != len(names):
+            return "joint_names must not contain duplicates"
+        if not message.points:
+            return "trajectory has no points"
+
+        order = [names.index(name) for name in ARM_JOINTS]
+        points = []
+        previous_time = -1.0
+        for point in message.points:
+            point_time = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
+            if not math.isfinite(point_time) or point_time < 0.1 or point_time <= previous_time:
+                return "point time_from_start values must be finite, at least 0.1 s, and strictly increasing"
+            if len(point.positions) != len(ARM_JOINTS):
+                return "each point must contain six position targets"
+            positions = tuple(float(point.positions[index]) for index in order)
+            if not all(math.isfinite(position) for position in positions):
+                return "position targets must be finite"
+            for name, position in zip(ARM_JOINTS, positions):
+                lower, upper = self.joint_limits[name]
+                if position < lower or position > upper:
+                    return f"{name} target {position:.6f} is outside [{lower:.6f}, {upper:.6f}]"
+                if abs(position) > MAX_SAFE_ARM_ABS_RAD:
+                    return f"{name} target {position:.6f} exceeds the {MAX_SAFE_ARM_ABS_RAD:.3f} rad safety limit"
+            points.append((point_time, positions))
+            previous_time = point_time
+
+        self.start_time = now
+        self.start_positions = tuple(float(position) for position in current_positions)
+        self.points = tuple(points)
+        return None
+
+    def target_at(self, now):
+        if not self.points:
+            return None
+        elapsed = max(0.0, now - self.start_time)
+        first_time, first_positions = self.points[0]
+        if elapsed <= first_time:
+            return self._interpolate(self.start_positions, first_positions, elapsed / first_time) if first_time else first_positions
+        for (left_time, left_positions), (right_time, right_positions) in zip(self.points, self.points[1:]):
+            if elapsed <= right_time:
+                return self._interpolate(left_positions, right_positions, (elapsed - left_time) / (right_time - left_time))
+        return self.points[-1][1]
+
+    @staticmethod
+    def _interpolate(left, right, ratio):
+        return tuple(a + (b - a) * ratio for a, b in zip(left, right))
+
+
+class GripperRamp:
+    """Rate-limit the Robotiq master joint so commands never jump in one frame."""
+
+    def __init__(self, lower=0.0, upper=0.8, max_velocity=0.1):
+        self.lower = lower
+        self.upper = upper
+        self.max_velocity = max_velocity
+        self.target = None
+        self.commanded = None
+
+    def set_target(self, target):
+        if not math.isfinite(target) or not self.lower <= target <= self.upper:
+            return f"target must be within [{self.lower:.3f}, {self.upper:.3f}] rad"
+        self.target = target
+        return None
+
+    def step(self, current, dt):
+        if self.target is None:
+            return None
+        if self.commanded is None:
+            self.commanded = current
+        delta = self.target - self.commanded
+        self.commanded += max(-self.max_velocity * dt, min(self.max_velocity * dt, delta))
+        return self.commanded
+
+
+def run_trajectory_self_test() -> None:
+    class Duration:
+        def __init__(self, seconds):
+            self.sec, self.nanosec = divmod(round(seconds * 1_000_000_000), 1_000_000_000)
+
+    class Point:
+        def __init__(self, positions, seconds):
+            self.positions, self.time_from_start = positions, Duration(seconds)
+
+    class Message:
+        joint_names = list(ARM_JOINTS)
+        points = [Point([1, 2, 3, 4, 5, 6], 1.0), Point([2, 3, 4, 5, 6, 6], 2.0)]
+
+    executor = TrajectoryExecutor({name: (-10.0, 10.0) for name in ARM_JOINTS})
+    assert executor.submit(Message(), 10.0, [0.0] * 6) is None
+    assert executor.target_at(10.5) == (0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
+    assert executor.target_at(11.5) == (1.5, 2.5, 3.5, 4.5, 5.5, 6.0)
+    Message.joint_names = [*ARM_JOINTS[:-1], "robotiq_85_left_knuckle_joint"]
+    assert executor.submit(Message(), 12.0, [0.0] * 6) is not None
+    gripper = GripperRamp()
+    assert gripper.set_target(0.6) is None
+    assert math.isclose(gripper.step(0.0, 0.1), 0.01, abs_tol=1e-12)
+    assert gripper.set_target(0.9) is not None
+    print("[bridge] trajectory self-test passed", flush=True)
+
+
+def repair_gripper_limits(stage) -> None:
+    from pxr import Sdf
+    master = stage.GetPrimAtPath(f"/fairino3_v6_robot/Physics/{GRIPPER_MASTER_JOINT}")
+    if not master or not master.IsValid():
+        raise RuntimeError("Robotiq master joint not found")
+    for attr_name, value in (("physics:lowerLimit", 0.0), ("physics:upperLimit", GRIPPER_LIMIT_DEG)):
+        attr = master.GetAttribute(attr_name)
+        if not attr:
+            attr = master.CreateAttribute(attr_name, Sdf.ValueTypeNames.Float)
+        attr.Set(value)
+    velocity = master.GetAttribute("physxJoint:maxJointVelocity")
+    if not velocity:
+        velocity = master.CreateAttribute("physxJoint:maxJointVelocity", Sdf.ValueTypeNames.Float)
+    velocity.Set(math.degrees(GRIPPER_MAX_VELOCITY_RAD_S))
+    for name in (
+        "robotiq_85_left_inner_knuckle_joint",
+        "robotiq_85_right_inner_knuckle_joint",
+        "robotiq_85_left_finger_tip_joint",
+        "robotiq_85_right_finger_tip_joint",
+    ):
+        prim = stage.GetPrimAtPath(f"/fairino3_v6_robot/Physics/{name}")
+        if not prim or not prim.IsValid():
+            continue
+        for attr_name, value in (("physics:lowerLimit", -45.8366), ("physics:upperLimit", 45.8366)):
+            attr = prim.GetAttribute(attr_name)
+            if not attr:
+                attr = prim.CreateAttribute(attr_name, Sdf.ValueTypeNames.Double)
+            attr.Set(value)
+        velocity = prim.GetAttribute("physxJoint:maxJointVelocity")
+        if not velocity:
+            velocity = prim.CreateAttribute("physxJoint:maxJointVelocity", Sdf.ValueTypeNames.Float)
+        velocity.Set(math.degrees(GRIPPER_MAX_VELOCITY_RAD_S))
+
+
+def configure_position_drives(stage) -> None:
+    """Add the missing PhysX PD gains without saving changes to the user's USD."""
+    from pxr import UsdPhysics
+
+    drives = ARM_DRIVES
+    for name, (max_force, stiffness, damping) in drives.items():
+        joint = stage.GetPrimAtPath(f"/fairino3_v6_robot/Physics/{name}")
+        if not joint or not joint.IsValid():
+            raise RuntimeError(f"position-drive joint not found: {name}")
+        drive = UsdPhysics.DriveAPI.Apply(joint, "angular")
+        drive.CreateTypeAttr("force")
+        drive.CreateMaxForceAttr(max_force).Set(max_force)
+        drive.CreateStiffnessAttr(stiffness).Set(stiffness)
+        drive.CreateDampingAttr(damping).Set(damping)
+        print(
+            f"[bridge] position drive {name}: force={max_force:.1f}, "
+            f"stiffness={stiffness:.1f}, damping={damping:.1f}",
+            flush=True,
+        )
+    gripper_joint = stage.GetPrimAtPath(f"/fairino3_v6_robot/Physics/{GRIPPER_MASTER_JOINT}")
+    drive = UsdPhysics.DriveAPI.Apply(gripper_joint, "angular")
+    max_force, stiffness, damping = GRIPPER_MASTER_DRIVE
+    drive.CreateTypeAttr("force")
+    drive.CreateMaxForceAttr(max_force).Set(max_force)
+    drive.CreateStiffnessAttr(stiffness).Set(stiffness)
+    drive.CreateDampingAttr(damping).Set(damping)
+    print(
+        f"[bridge] gripper drive {GRIPPER_MASTER_JOINT}: force={max_force:.1f}, "
+        f"stiffness={stiffness:.1f}, damping={damping:.1f}, limit=0.800 rad",
+        flush=True,
+    )
+
+
+BANANA_CALIBRATION_POSITION = (-0.13779715872850662, -0.5833656024637526, 0.060)
+
+
+def configure_scene_collisions(
+    stage, freeze_banana: bool, enable_collisions: bool = True, banana_contact_proxy: bool = False
+) -> None:
+    """Give the dynamic banana and static table real collider shapes for this session."""
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+    if enable_collisions:
+        counts = {}
+        for root_path in ("/World/Ground", "/World/Worktable", "/World/Banana"):
+            root = stage.GetPrimAtPath(root_path)
+            if not root or not root.IsValid():
+                counts[root_path] = "missing"
+                continue
+            if root_path == "/World/Banana" and banana_contact_proxy:
+                disabled = 0
+                for prim in Usd.PrimRange(root):
+                    if prim.HasAPI(UsdPhysics.CollisionAPI):
+                        UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr(False).Set(False)
+                        disabled += 1
+                counts[root_path] = f"mesh disabled ({disabled})"
+                continue
+            count = 0
+            try:
+                for prim in Usd.PrimRange(root):
+                    if not prim.IsA(UsdGeom.Gprim):
+                        continue
+                    collider = UsdPhysics.CollisionAPI.Apply(prim)
+                    collider.CreateCollisionEnabledAttr(True).Set(True)
+                    if root_path == "/World/Banana" and prim.IsA(UsdGeom.Mesh):
+                        UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr("convexHull").Set("convexHull")
+                    count += 1
+                counts[root_path] = count
+            except Exception as exc:
+                counts[root_path] = f"error: {exc}"
+        if banana_contact_proxy:
+            banana = stage.GetPrimAtPath("/World/Banana")
+            if not banana or not banana.IsValid():
+                raise RuntimeError("Banana prim not found for contact proxy")
+            proxy = UsdGeom.Capsule.Define(stage, "/World/BananaContactProxy")
+            proxy.CreateAxisAttr(UsdGeom.Tokens.x)
+            proxy.CreateRadiusAttr(0.025)
+            proxy.CreateHeightAttr(0.12)
+            proxy.AddTranslateOp().Set(Gf.Vec3d(*BANANA_CALIBRATION_POSITION))
+            UsdPhysics.CollisionAPI.Apply(proxy.GetPrim()).CreateCollisionEnabledAttr(True).Set(True)
+            if not freeze_banana:
+                UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(False).Set(False)
+                UsdPhysics.MassAPI.Apply(proxy.GetPrim()).CreateMassAttr(0.12).Set(0.12)
+            counts["/World/BananaContactProxy"] = "capsule 0.120m x 0.050m"
+        print(f"[bridge] scene colliders enabled: {counts}", flush=True)
+    else:
+        disabled = {}
+        for root_path in ("/World/Ground", "/World/Worktable", "/World/Banana"):
+            root = stage.GetPrimAtPath(root_path)
+            if not root or not root.IsValid():
+                disabled[root_path] = "missing"
+                continue
+            count = 0
+            for prim in Usd.PrimRange(root):
+                if prim.HasAPI(UsdPhysics.CollisionAPI):
+                    UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr(False).Set(False)
+                    count += 1
+            disabled[root_path] = count
+        print(f"[bridge] scene colliders disabled for this diagnostic run: {disabled}", flush=True)
+    if freeze_banana:
+        banana = stage.GetPrimAtPath("/World/Banana")
+        banana_xform = UsdGeom.Xformable(banana)
+        translate_ops = [
+            op for op in banana_xform.GetOrderedXformOps()
+            if op.GetOpType() == UsdGeom.XformOp.TypeTranslate
+        ]
+        translate_op = translate_ops[-1] if translate_ops else banana_xform.AddTranslateOp()
+        translate_op.Set(Gf.Vec3d(*BANANA_CALIBRATION_POSITION))
+        body = UsdPhysics.RigidBodyAPI.Apply(banana)
+        body.CreateKinematicEnabledAttr(True).Set(True)
+        world_position = banana_xform.ComputeLocalToWorldTransform(
+            Usd.TimeCode.Default()
+        ).ExtractTranslation()
+        print(
+            f"[bridge] banana reset and configured kinematic for TCP calibration: "
+            f"world={tuple(world_position)}",
+            flush=True,
+        )
+
+
+def reduce_detection_shadows(stage) -> None:
+    """Disable existing light shadows for the camera session; do not save the USD."""
+    disabled = 0
+    for prim in stage.Traverse():
+        shadow_enable = prim.GetAttribute("inputs:shadow:enable")
+        if shadow_enable and shadow_enable.Get() is not False:
+            shadow_enable.Set(False)
+            disabled += 1
+    print(f"[bridge] disabled shadows on {disabled} light(s) for YOLO", flush=True)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--asset", help="Path to fairino3_robotiq.usd")
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument(
+        "--rgb-from-active-viewport",
+        action="store_true",
+        help="Publish RGB from the visible Isaac viewport render product (requires windowed mode).",
+    )
+    parser.add_argument("--domain-id", type=int, default=None)
+    parser.add_argument("--test-frames", type=int, default=0)
+    parser.add_argument("--trajectory-topic", default=JOINT_TRAJECTORY_TOPIC)
+    parser.add_argument("--camera-width", type=int, default=640)
+    parser.add_argument("--camera-height", type=int, default=480)
+    parser.add_argument("--camera-tick-rate", type=float, default=1.0)
+    parser.add_argument("--sim-rate", type=float, default=30.0)
+    parser.add_argument("--self-test-trajectories", action="store_true")
+    parser.add_argument("--drive-smoke-test", action="store_true",
+                        help="hold the arm, move j6 by 0.1 rad, and verify PhysX tracking")
+    parser.add_argument("--keep-light-shadows", action="store_true")
+    parser.add_argument("--freeze-banana", action="store_true",
+                        help="Keep the banana kinematic during TCP-only calibration.")
+    parser.add_argument("--disable-scene-collisions", action="store_true",
+                        help="Diagnostic only: do not enable Ground, Worktable, or Banana PhysX colliders.")
+    parser.add_argument("--banana-contact-proxy", action="store_true",
+                        help="Diagnostic only: replace Banana's scaled mesh collider with a fixed capsule proxy.")
+    args = parser.parse_args()
+    if args.self_test_trajectories:
+        run_trajectory_self_test()
+        return 0
+    print(f"[bridge] args parsed: {args}", flush=True)
+    asset_arg = args.asset or os.path.join(os.path.dirname(__file__), "..", "..", "..", "fairino3_robotiq.usd")
+    asset = os.path.abspath(asset_arg)
+    if not os.path.isfile(asset):
+        parser.error(f"USD asset does not exist: {asset}")
+    ros_domain_id = args.domain_id if args.domain_id is not None else int(os.environ.get("ROS_DOMAIN_ID", "42"))
+    if not 0 <= ros_domain_id <= 232:
+        parser.error("--domain-id must be between 0 and 232")
+    os.environ["ROS_DOMAIN_ID"] = str(ros_domain_id)
+    os.environ.setdefault("ROS_LOCALHOST_ONLY", "0")
+
+    from isaacsim import SimulationApp
+
+    print("[bridge] starting SimulationApp", flush=True)
+    simulation_app = SimulationApp({"headless": args.headless})
+    print("[bridge] SimulationApp started", flush=True)
+    try:
+        import omni
+        print("[bridge] omni imported", flush=True)
+        import omni.graph.core as og
+        print("[bridge] graph imported", flush=True)
+        from isaacsim.core.experimental.utils import app as app_utils
+        print("[bridge] app utils imported", flush=True)
+        from isaacsim.core.utils.stage import open_stage
+        from pxr import Gf, Sdf, Usd, UsdGeom
+
+        # Isaac Sim 6.0.1 uses the isaacsim.* ROS 2 extension namespace.
+        app_utils.enable_extension("isaacsim.ros2.bridge")
+        simulation_app.update()
+        print(f"[bridge] opening asset: {asset}", flush=True)
+        if not open_stage(asset):
+            raise RuntimeError(f"failed to open USD stage: {asset}")
+        stage = omni.usd.get_context().get_stage()
+        robot_path = "/fairino3_v6_robot"
+        articulation_root_path = robot_path + "/Geometry/base_link"
+        repair_gripper_limits(stage)
+        configure_position_drives(stage)
+        configure_scene_collisions(
+            stage, args.freeze_banana, not args.disable_scene_collisions, args.banana_contact_proxy
+        )
+        if not args.keep_light_shadows:
+            reduce_detection_shadows(stage)
+        robot_prim = stage.GetPrimAtPath(robot_path)
+        if not robot_prim:
+            raise RuntimeError(f"robot prim not found: {robot_path}")
+        print(f"[bridge] robot found: {robot_path}", flush=True)
+
+        camera_path = robot_path + "/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/wrist_camera"
+        camera = UsdGeom.Camera.Define(stage, camera_path)
+        camera_prim = camera.GetPrim()
+        camera_prim.ApplyAPI("OmniSensorAPI")
+        camera_prim.GetAttribute("omni:sensor:tickRate").Set(args.camera_tick_rate)
+
+        from usdrt import Sdf as UsdrtSdf
+
+        keys = og.Controller.Keys
+        graph, _, _, _ = og.Controller.edit(
+            {"graph_path": "/ROS_FR3", "evaluator_name": "execution"},
+            {
+                keys.CREATE_NODES: [
+                    ("OnPlaybackTick", "omni.graph.action.OnPlaybackTick"),
+                    ("Context", "isaacsim.ros2.bridge.ROS2Context"),
+                    ("ReadSimulationTime", "isaacsim.core.nodes.IsaacReadSimulationTime"),
+                    ("SensorDataQoS", "isaacsim.ros2.bridge.ROS2QoSProfile"),
+                    ("PublishClock", "isaacsim.ros2.bridge.ROS2PublishClock"),
+                    ("ComputeTransformTree", "isaacsim.core.nodes.IsaacComputeTransformTree"),
+                    ("PublishTransformTree", "isaacsim.ros2.bridge.ROS2PublishTransformTree"),
+                    ("StaticTool0", "isaacsim.ros2.bridge.ROS2PublishRawTransformTree"),
+                    ("StaticGripperTcp", "isaacsim.ros2.bridge.ROS2PublishRawTransformTree"),
+                    ("CreateCameraRenderProduct", "isaacsim.core.nodes.IsaacCreateRenderProduct"),
+                    ("PublishRgb", "isaacsim.ros2.bridge.ROS2CameraHelper"),
+                    ("PublishDepth", "isaacsim.ros2.bridge.ROS2CameraHelper"),
+                    ("PublishCameraInfo", "isaacsim.ros2.bridge.ROS2CameraInfoHelper"),
+                ],
+                keys.SET_VALUES: [
+                    ("Context.inputs:domain_id", ros_domain_id),
+                    ("Context.inputs:useDomainIDEnvVar", False),
+                    ("PublishClock.inputs:topicName", "/clock"),
+                    ("ComputeTransformTree.inputs:parentPrim", UsdrtSdf.Path("/World")),
+                    # Include the camera Prim so TF comes from the saved USD transform,
+                    # rather than a duplicated hand-authored camera mount transform.
+                    ("ComputeTransformTree.inputs:targetPrims", [UsdrtSdf.Path(articulation_root_path), UsdrtSdf.Path(camera_path)]),
+                    ("PublishTransformTree.inputs:topicName", "/tf"),
+                    ("StaticTool0.inputs:parentFrameId", "wrist3_link"),
+                    ("StaticTool0.inputs:childFrameId", "tool0"),
+                    ("StaticGripperTcp.inputs:parentFrameId", "robotiq_85_base_link"),
+                    ("StaticGripperTcp.inputs:childFrameId", "gripper_tcp"),
+                    ("StaticGripperTcp.inputs:translation", [0.000532, 0.000127, 0.000953]),
+                    ("CreateCameraRenderProduct.inputs:cameraPrim", [UsdrtSdf.Path(camera_path)]),
+                    ("CreateCameraRenderProduct.inputs:width", args.camera_width),
+                    ("CreateCameraRenderProduct.inputs:height", args.camera_height),
+                    ("SensorDataQoS.inputs:createProfile", "Sensor Data"),
+                    ("PublishRgb.inputs:type", "rgb"),
+                    ("PublishRgb.inputs:topicName", "/wrist_camera/image_raw"),
+                    ("PublishRgb.inputs:frameId", "wrist_camera"),
+                    ("PublishDepth.inputs:type", "depth"),
+                    ("PublishDepth.inputs:topicName", "/wrist_camera/depth/image_raw"),
+                    ("PublishDepth.inputs:frameId", "wrist_camera"),
+                    ("PublishCameraInfo.inputs:topicName", "/wrist_camera/depth/camera_info"),
+                    ("PublishCameraInfo.inputs:frameId", "wrist_camera"),
+                ],
+                keys.CONNECT: [
+                    ("OnPlaybackTick.outputs:tick", "PublishClock.inputs:execIn"),
+                    ("Context.outputs:context", "PublishClock.inputs:context"),
+                    ("ReadSimulationTime.outputs:simulationTime", "PublishClock.inputs:timeStamp"),
+                    ("OnPlaybackTick.outputs:tick", "ComputeTransformTree.inputs:execIn"),
+                    ("ComputeTransformTree.outputs:execOut", "PublishTransformTree.inputs:execIn"),
+                    ("Context.outputs:context", "PublishTransformTree.inputs:context"),
+                    ("ReadSimulationTime.outputs:simulationTime", "PublishTransformTree.inputs:timeStamp"),
+                    ("ComputeTransformTree.outputs:parentFrames", "PublishTransformTree.inputs:parentFrames"),
+                    ("ComputeTransformTree.outputs:childFrames", "PublishTransformTree.inputs:childFrames"),
+                    ("ComputeTransformTree.outputs:translations", "PublishTransformTree.inputs:translations"),
+                    ("ComputeTransformTree.outputs:orientations", "PublishTransformTree.inputs:orientations"),
+                    ("OnPlaybackTick.outputs:tick", "CreateCameraRenderProduct.inputs:execIn"),
+                    ("CreateCameraRenderProduct.outputs:execOut", "PublishRgb.inputs:execIn"),
+                    ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishRgb.inputs:renderProductPath"),
+                    ("CreateCameraRenderProduct.outputs:execOut", "PublishDepth.inputs:execIn"),
+                    ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishDepth.inputs:renderProductPath"),
+                    ("CreateCameraRenderProduct.outputs:execOut", "PublishCameraInfo.inputs:execIn"),
+                    ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishCameraInfo.inputs:renderProductPath"),
+                    ("SensorDataQoS.outputs:qosProfile", "PublishRgb.inputs:qosProfile"),
+                    ("SensorDataQoS.outputs:qosProfile", "PublishDepth.inputs:qosProfile"),
+                    ("SensorDataQoS.outputs:qosProfile", "PublishCameraInfo.inputs:qosProfile"),
+                ],
+            },
+        )
+        for node in ("StaticTool0", "StaticGripperTcp"):
+            og.Controller.set(og.Controller.attribute(f"/ROS_FR3/{node}.inputs:topicName"), "/tf_static")
+            og.Controller.set(og.Controller.attribute(f"/ROS_FR3/{node}.inputs:staticPublisher"), True)
+            og.Controller.connect(
+                og.Controller.attribute("/ROS_FR3/OnPlaybackTick.outputs:tick"),
+                og.Controller.attribute(f"/ROS_FR3/{node}.inputs:execIn"),
+            )
+            og.Controller.connect(
+                og.Controller.attribute("/ROS_FR3/Context.outputs:context"),
+                og.Controller.attribute(f"/ROS_FR3/{node}.inputs:context"),
+            )
+            og.Controller.connect(
+                og.Controller.attribute("/ROS_FR3/ReadSimulationTime.outputs:simulationTime"),
+                og.Controller.attribute(f"/ROS_FR3/{node}.inputs:timeStamp"),
+            )
+        for node in ("PublishRgb", "PublishDepth", "PublishCameraInfo"):
+            og.Controller.connect(
+                og.Controller.attribute("/ROS_FR3/Context.outputs:context"),
+                og.Controller.attribute(f"/ROS_FR3/{node}.inputs:context"),
+            )
+        og.Controller.evaluate_sync(graph)
+        print("[bridge] native ROS 2 joint-state graph created: /ROS_FR3", flush=True)
+        print("[bridge] native clock publisher ready: /clock", flush=True)
+
+        from isaacsim.core.api import World
+        from isaacsim.core.prims import Articulation
+        joint_names = ["j1", "j2", "j3", "j4", "j5", "j6",
+                       "robotiq_85_left_knuckle_joint", "robotiq_85_right_knuckle_joint",
+                       "robotiq_85_left_inner_knuckle_joint", "robotiq_85_right_inner_knuckle_joint",
+                       "robotiq_85_left_finger_tip_joint", "robotiq_85_right_finger_tip_joint"]
+        # Articulation tensors are only available after a physics reset.  Do
+        # not publish a plausible-looking all-zero fallback if this fails.
+        world = World(stage_units_in_meters=1.0)
+        banana_visual = stage.GetPrimAtPath("/World/Banana") if args.banana_contact_proxy and not args.freeze_banana else None
+        banana_proxy = stage.GetPrimAtPath("/World/BananaContactProxy") if banana_visual else None
+        banana_visual_xform = UsdGeom.Xformable(banana_visual) if banana_visual else None
+        banana_proxy_xform = UsdGeom.Xformable(banana_proxy) if banana_proxy else None
+        banana_visual_translate = None
+        if banana_visual_xform:
+            ops = [op for op in banana_visual_xform.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
+            banana_visual_translate = ops[-1] if ops else banana_visual_xform.AddTranslateOp()
+        articulation = Articulation(robot_path)
+        world.reset()
+        articulation.initialize()
+        articulation_names = list(articulation.dof_names)
+        missing = set(joint_names) - set(articulation_names)
+        if missing:
+            raise RuntimeError(f"articulation is missing expected DOFs: {sorted(missing)}")
+        arm_indices = [articulation_names.index(name) for name in ARM_JOINTS]
+        arm_limits = {}
+        for name in ARM_JOINTS:
+            joint = stage.GetPrimAtPath(f"{robot_path}/Physics/{name}")
+            lower = joint.GetAttribute("physics:lowerLimit").Get()
+            upper = joint.GetAttribute("physics:upperLimit").Get()
+            if lower is None or upper is None:
+                raise RuntimeError(f"{name} has no finite joint limits")
+            arm_limits[name] = (math.radians(float(lower)), math.radians(float(upper)))
+        print(f"[bridge] articulation state ready: {len(articulation_names)} DOF", flush=True)
+        print(
+            "[bridge] arm limits: "
+            + ", ".join(f"{name}=[{lower:.4f}, {upper:.4f}]" for name, (lower, upper) in arm_limits.items()),
+            flush=True,
+        )
+        smoke_target = None
+        smoke_error = None
+        if args.drive_smoke_test:
+            if not args.test_frames or args.test_frames < 90:
+                parser.error("--drive-smoke-test requires --test-frames >= 90")
+            smoke_target = articulation.get_joint_positions()[0, arm_indices].copy()
+            j6_index = ARM_JOINTS.index("j6")
+            lower, upper = arm_limits["j6"]
+            smoke_target[j6_index] = min(upper, max(lower, smoke_target[j6_index] + 0.1))
+            print("[bridge] drive smoke test: holding arm and moving j6 by 0.1 rad", flush=True)
+
+        import rclpy
+        from rclpy.executors import SingleThreadedExecutor
+        from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+        from rclpy.qos import qos_profile_sensor_data
+        from sensor_msgs.msg import CameraInfo, Image, JointState
+        from std_msgs.msg import Float64
+        from trajectory_msgs.msg import JointTrajectory
+
+        executor = TrajectoryExecutor(arm_limits)
+        gripper_ramp = GripperRamp()
+        master_index = articulation_names.index(GRIPPER_MASTER_JOINT)
+        rclpy.init(args=None)
+        trajectory_node = rclpy.create_node("fr3_joint_trajectory_subscriber")
+        gripper_node = rclpy.create_node("fr3_gripper_command_subscriber")
+
+        def receive_trajectory(message) -> None:
+            try:
+                current_positions = articulation.get_joint_positions()[0, arm_indices]
+                error = executor.submit(message, world.current_time, current_positions)
+                if error:
+                    print(f"[bridge] rejected {args.trajectory_topic}: {error}", flush=True)
+                else:
+                    final_target = ", ".join(
+                        f"{name}={position:.4f}"
+                        for name, position in zip(ARM_JOINTS, executor.points[-1][1])
+                    )
+                    print(
+                        f"[bridge] accepted {args.trajectory_topic}: {len(message.points)} point(s), "
+                        f"{executor.points[-1][0]:.3f}s, final_target=[{final_target}]",
+                        flush=True,
+                    )
+                    print("[bridge] arm execution mode: physics position targets", flush=True)
+            except Exception as error:
+                print(f"[bridge] rejected {args.trajectory_topic}: callback failed: {error}", flush=True)
+
+        trajectory_node.create_subscription(
+            JointTrajectory,
+            args.trajectory_topic,
+            receive_trajectory,
+            QoSProfile(
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.VOLATILE,
+            ),
+        )
+        def receive_gripper_target(message) -> None:
+            error = gripper_ramp.set_target(float(message.data))
+            if error:
+                print(f"[bridge] rejected {GRIPPER_COMMAND_TOPIC}: {error}", flush=True)
+            else:
+                print(f"[bridge] accepted {GRIPPER_COMMAND_TOPIC}: {message.data:.3f} rad", flush=True)
+
+        gripper_node.create_subscription(Float64, GRIPPER_COMMAND_TOPIC, receive_gripper_target, 1)
+        gripper_state_publisher = gripper_node.create_publisher(Float64, GRIPPER_STATE_TOPIC, 10)
+        joint_state_publisher = trajectory_node.create_publisher(JointState, "/joint_states", 10)
+        direct_rgb_publisher = trajectory_node.create_publisher(
+            Image, "/wrist_camera/image_raw_direct", qos_profile_sensor_data
+        )
+        direct_depth_publisher = trajectory_node.create_publisher(
+            Image, "/wrist_camera/depth/image_raw_direct", qos_profile_sensor_data
+        )
+        direct_depth_info_publisher = trajectory_node.create_publisher(
+            CameraInfo, "/wrist_camera/depth/camera_info_direct", qos_profile_sensor_data
+        )
+        ros_executor = SingleThreadedExecutor()
+        ros_executor.add_node(trajectory_node)
+        ros_executor.add_node(gripper_node)
+        print("[bridge] joint-state publisher ready: /joint_states", flush=True)
+        print(f"[bridge] trajectory subscriber ready: {args.trajectory_topic}", flush=True)
+        print(f"[bridge] gripper bridge ready: {GRIPPER_COMMAND_TOPIC}", flush=True)
+
+        timeline = omni.timeline.get_timeline_interface()
+        print(
+            "[bridge] camera publishers configured: "
+            "/wrist_camera/image_raw, /wrist_camera/depth/image_raw, "
+            "/wrist_camera/depth/camera_info",
+            flush=True,
+        )
+        timeline.play()
+        viewport_rgb_annotator = None
+        viewport_depth_annotator = None
+        if args.rgb_from_active_viewport:
+            if args.headless:
+                raise RuntimeError(
+                    "--rgb-from-active-viewport requires Isaac windowed mode; remove --headless."
+                )
+            # The GUI viewport is demonstrably rendering the banana correctly.
+            # Reuse that exact render product instead of creating an off-screen
+            # product, which is black in this Isaac/WSL configuration.
+            from omni.kit.viewport.utility import get_active_viewport
+            import omni.replicator.core as rep
+            import numpy as np
+
+            simulation_app.update()
+            viewport = get_active_viewport()
+            if viewport is None:
+                raise RuntimeError("Isaac active viewport is unavailable for RGB detection.")
+            viewport.camera_path = camera_path
+            viewport.set_texture_resolution([args.camera_width, args.camera_height])
+            simulation_app.update()
+            # Attach directly to the render product displayed by the GUI.
+            # Camera.get_rgba() cannot read this Hydra texture reliably in 6.0.1.
+            viewport_rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+            viewport_rgb_annotator.attach(viewport.get_render_product_path())
+            viewport_depth_annotator = rep.AnnotatorRegistry.get_annotator(
+                "distance_to_image_plane"
+            )
+            viewport_depth_annotator.attach(viewport.get_render_product_path())
+            print(
+                "[bridge] GUI viewport RGB-D publishers ready: "
+                "/wrist_camera/image_raw_direct, /wrist_camera/depth/image_raw_direct",
+                flush=True,
+            )
+        frames = 0
+        previous_sim_time = world.current_time
+        last_direct_rgb_time = -float("inf")
+        camera_debug = os.environ.get("FR3_CAMERA_DEBUG") == "1"
+        last_camera_heartbeat = time.monotonic()
+        direct_rgb_frames = 0
+        direct_rgb_status = "not_attempted"
+        last_safe_arm_positions = tuple(
+            float(position) for position in articulation.get_joint_positions()[0, arm_indices]
+        )
+        # In headless smoke tests Kit may report not-running immediately after
+        # a world reset.  An explicit finite test still advances the requested
+        # physics frames and therefore exercises the native publisher node.
+        while simulation_app.is_running() or (args.test_frames and frames < args.test_frames):
+            step_started = time.monotonic()
+            if camera_debug and step_started - last_camera_heartbeat >= 5.0:
+                print(
+                    f"[bridge] camera heartbeat frames={frames} sim_time={world.current_time:.3f} "
+                    f"direct_rgb_frames={direct_rgb_frames} direct_rgb={direct_rgb_status}",
+                    flush=True,
+                )
+                last_camera_heartbeat = step_started
+            # A small wait lets Fast DDS dispatch an arriving command without
+            # busy-spinning the simulation loop while the controller is idle.
+            ros_executor.spin_once(timeout_sec=0.001)
+            arm_positions = tuple(
+                float(position) for position in articulation.get_joint_positions()[0, arm_indices]
+            )
+            target = executor.target_at(world.current_time)
+            if smoke_target is not None:
+                target = smoke_target
+            unsafe = [
+                (name, position)
+                for name, position in zip(ARM_JOINTS, arm_positions)
+                if (
+                    not math.isfinite(position)
+                    or abs(position) > MAX_SAFE_ARM_ABS_RAD
+                    or position < arm_limits[name][0] - ACTUAL_LIMIT_GRACE_RAD
+                    or position > arm_limits[name][1] + ACTUAL_LIMIT_GRACE_RAD
+                )
+            ]
+            if unsafe:
+                print(
+                    "[bridge] SAFETY STOP: unsafe arm state "
+                    + ", ".join(f"{name}={position!r}" for name, position in unsafe),
+                    + (f"; active_target={tuple(float(value) for value in target)!r}" if target is not None else ""),
+                    flush=True,
+                )
+                articulation.set_joint_position_targets(last_safe_arm_positions, joint_indices=arm_indices)
+                timeline.stop()
+                break
+            last_safe_arm_positions = arm_positions
+            if target is not None:
+                articulation.set_joint_position_targets(target, joint_indices=arm_indices)
+            current_gripper_position = float(articulation.get_joint_positions()[0, master_index])
+            gripper_target = gripper_ramp.step(
+                current_gripper_position,
+                max(0.0, world.current_time - previous_sim_time),
+            )
+            if gripper_target is not None:
+                articulation.set_joint_position_targets((gripper_target,), joint_indices=[master_index])
+            gripper_state_publisher.publish(Float64(data=current_gripper_position))
+            state = JointState()
+            state.header.stamp.sec = int(world.current_time)
+            state.header.stamp.nanosec = int((world.current_time % 1.0) * 1_000_000_000)
+            state.name = articulation_names
+            state.position = [float(position) for position in articulation.get_joint_positions()[0]]
+            joint_state_publisher.publish(state)
+            previous_sim_time = world.current_time
+            # The ROS camera helper reads an off-screen render product; without
+            # rendering it publishes valid rgb8 messages filled with black.
+            world.step(render=True)
+            if banana_visual_translate and banana_proxy_xform:
+                banana_visual_translate.Set(
+                    banana_proxy_xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).ExtractTranslation()
+                )
+            simulation_app.update()
+            if (
+                viewport_rgb_annotator is not None
+                and viewport_depth_annotator is not None
+                and world.current_time - last_direct_rgb_time >= 1.0 / max(0.1, args.camera_tick_rate)
+            ):
+                rgba = viewport_rgb_annotator.get_data()
+                depth = viewport_depth_annotator.get_data()
+                if rgba is not None and rgba.size and depth is not None and depth.size:
+                    direct_rgb_status = f"{rgba.shape}/{rgba.dtype}"
+                    rgb = rgba[:, :, :3]
+                    if rgb.dtype != np.uint8:
+                        rgb = np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+                    image = Image()
+                    image.header.stamp.sec = int(world.current_time)
+                    image.header.stamp.nanosec = int(
+                        (world.current_time % 1.0) * 1_000_000_000
+                    )
+                    image.header.frame_id = "wrist_camera"
+                    image.height, image.width = rgb.shape[:2]
+                    image.encoding = "rgb8"
+                    image.is_bigendian = 0
+                    image.step = image.width * 3
+                    image.data = rgb.tobytes()
+                    direct_rgb_publisher.publish(image)
+                    depth = np.asarray(depth, dtype=np.float32).squeeze()
+                    depth_image = Image()
+                    depth_image.header = image.header
+                    depth_image.height, depth_image.width = depth.shape[:2]
+                    depth_image.encoding = "32FC1"
+                    depth_image.is_bigendian = 0
+                    depth_image.step = depth_image.width * 4
+                    depth_image.data = depth.tobytes()
+                    direct_depth_publisher.publish(depth_image)
+                    depth_info = CameraInfo()
+                    depth_info.header = image.header
+                    depth_info.height = image.height
+                    depth_info.width = image.width
+                    fx = args.camera_width * (2.0 / 3.0)
+                    fy = args.camera_height * (8.0 / 9.0)
+                    cx = args.camera_width / 2.0
+                    cy = args.camera_height / 2.0
+                    depth_info.k = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
+                    depth_info.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+                    depth_info.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+                    depth_info.distortion_model = "plumb_bob"
+                    direct_depth_info_publisher.publish(depth_info)
+                    last_direct_rgb_time = world.current_time
+                    direct_rgb_frames += 1
+                else:
+                    direct_rgb_status = "empty"
+            frames += 1
+            if args.test_frames and frames >= args.test_frames:
+                break
+            sleep_sec = 1.0 / max(1.0, args.sim_rate) - (time.monotonic() - step_started)
+            if sleep_sec > 0.0:
+                time.sleep(sleep_sec)
+        if smoke_target is not None:
+            actual = articulation.get_joint_positions()[0, arm_indices]
+            smoke_error = abs(float(actual[ARM_JOINTS.index("j6")] - smoke_target[ARM_JOINTS.index("j6")]))
+            print(f"[bridge] drive smoke test j6 error: {smoke_error:.4f} rad", flush=True)
+        timeline.stop()
+        render_product = og.Controller.attribute(
+            "/ROS_FR3/CreateCameraRenderProduct.outputs:renderProductPath"
+        ).get()
+        if not render_product:
+            raise RuntimeError("wrist camera render product was not created")
+        print(
+            "[bridge] camera publishers ready: "
+            "/wrist_camera/image_raw, /wrist_camera/depth/image_raw, "
+            "/wrist_camera/depth/camera_info",
+            flush=True,
+        )
+        print(f"[bridge] completed {frames} simulation frames", flush=True)
+        ros_executor.shutdown()
+        trajectory_node.destroy_node()
+        gripper_node.destroy_node()
+        if viewport_rgb_annotator is not None:
+            viewport_rgb_annotator.detach()
+        rclpy.shutdown()
+        if smoke_error is not None and smoke_error > 0.03:
+            raise RuntimeError(f"position drive did not track j6 target (error {smoke_error:.4f} rad)")
+    finally:
+        simulation_app.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
