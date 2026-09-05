@@ -1,0 +1,463 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    defaultPrim = "fairino3_v6_robot"
+    doc = """Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\tmpjz4vvf2y\\fairino3_v6_robot.usdc
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\urdf_import_fr3_robotiq_combined_t2wuevox\\usdex_fr3_robotiq_combined\\fairino3_v6_robot.usdc
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\urdf_import_fr3_robotiq_combined_t2wuevox\\temp_fr3_robotiq_combined\\fr3_robotiq_combined.usd
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\Desktop\\work\\Issac_fr3\\FR3\\isaac_fr3_sim\\assets\\fr3_robotiq_combined\\payloads\\base.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    subLayers = [
+        @./physics.usda@
+    ]
+    upAxis = "Z"
+)
+
+over "fairino3_v6_robot"
+{
+    over "Physics"
+    {
+        def MjcActuator "j1_actuator"
+        {
+            uniform double mjc:forceRange:max = 150
+            uniform double mjc:forceRange:min = -150
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/j1>
+        }
+
+        def MjcActuator "j2_actuator"
+        {
+            uniform double mjc:forceRange:max = 150
+            uniform double mjc:forceRange:min = -150
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/j2>
+        }
+
+        def MjcActuator "j3_actuator"
+        {
+            uniform double mjc:forceRange:max = 150
+            uniform double mjc:forceRange:min = -150
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/j3>
+        }
+
+        def MjcActuator "j4_actuator"
+        {
+            uniform double mjc:forceRange:max = 28
+            uniform double mjc:forceRange:min = -28
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/j4>
+        }
+
+        def MjcActuator "j5_actuator"
+        {
+            uniform double mjc:forceRange:max = 28
+            uniform double mjc:forceRange:min = -28
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/j5>
+        }
+
+        def MjcActuator "j6_actuator"
+        {
+            uniform double mjc:forceRange:max = 28
+            uniform double mjc:forceRange:min = -28
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/j6>
+        }
+
+        def MjcActuator "robotiq_85_left_knuckle_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = 50
+            uniform double mjc:forceRange:min = -50
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/robotiq_85_left_knuckle_joint>
+        }
+
+        def MjcActuator "robotiq_85_right_knuckle_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = 50
+            uniform double mjc:forceRange:min = -50
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/robotiq_85_right_knuckle_joint>
+        }
+
+        def MjcActuator "robotiq_85_left_inner_knuckle_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/robotiq_85_left_inner_knuckle_joint>
+        }
+
+        def MjcActuator "robotiq_85_right_inner_knuckle_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/robotiq_85_right_inner_knuckle_joint>
+        }
+
+        def MjcActuator "robotiq_85_left_finger_tip_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/robotiq_85_left_finger_tip_joint>
+        }
+
+        def MjcActuator "robotiq_85_right_finger_tip_joint_actuator"
+        {
+            uniform double mjc:forceRange:max = inf
+            uniform double mjc:forceRange:min = -inf
+            custom rel mjc:target
+            prepend rel mjc:target = </fairino3_v6_robot/Physics/robotiq_85_right_finger_tip_joint>
+        }
+
+        over "root_joint"
+        {
+        }
+
+        over "j1" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "j2" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "j3" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "j4" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "j5" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "j6" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "wrist_camera_joint"
+        {
+        }
+
+        over "robotiq_85_left_knuckle_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "robotiq_85_right_knuckle_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "robotiq_85_left_inner_knuckle_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "robotiq_85_right_inner_knuckle_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "robotiq_85_left_finger_tip_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "robotiq_85_right_finger_tip_joint" (
+            delete apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+        }
+
+        over "robotiq_85_base_joint"
+        {
+        }
+
+        over "robotiq_85_left_finger_joint"
+        {
+        }
+
+        over "robotiq_85_right_finger_joint"
+        {
+        }
+    }
+
+    over "Geometry"
+    {
+        over "base_link"
+        {
+            over "base_link"
+            {
+            }
+
+            over "shoulder_link"
+            {
+                over "shoulder_link"
+                {
+                }
+
+                over "upperarm_link"
+                {
+                    over "upperarm_link"
+                    {
+                    }
+
+                    over "forearm_link"
+                    {
+                        over "forearm_link"
+                        {
+                        }
+
+                        over "wrist1_link"
+                        {
+                            over "wrist1_link"
+                            {
+                            }
+
+                            over "wrist2_link"
+                            {
+                                over "wrist2_link"
+                                {
+                                }
+
+                                over "wrist3_link"
+                                {
+                                    over "wrist3_link"
+                                    {
+                                    }
+
+                                    over "wrist_camera_link"
+                                    {
+                                        over "wrist_camera_optical_frame"
+                                        {
+                                        }
+
+                                        over "box"
+                                        {
+                                        }
+
+                                        over "cylinder"
+                                        {
+                                        }
+
+                                        over "box_1"
+                                        {
+                                        }
+                                    }
+
+                                    over "wrist3_link_1"
+                                    {
+                                    }
+
+                                    over "tool0"
+                                    {
+                                        over "robotiq_85_base_link"
+                                        {
+                                            over "robotiq_base"
+                                            {
+                                            }
+
+                                            over "robotiq_85_left_knuckle_link"
+                                            {
+                                                over "left_knuckle"
+                                                {
+                                                }
+
+                                                over "robotiq_85_left_finger_link"
+                                                {
+                                                    over "left_finger"
+                                                    {
+                                                    }
+
+                                                    over "robotiq_85_left_finger_tip_link"
+                                                    {
+                                                        over "left_finger_tip"
+                                                        {
+                                                        }
+
+                                                        over "left_finger_tip_1"
+                                                        {
+                                                        }
+                                                    }
+
+                                                    over "left_finger_1"
+                                                    {
+                                                    }
+                                                }
+
+                                                over "left_knuckle_1"
+                                                {
+                                                }
+                                            }
+
+                                            over "robotiq_85_right_knuckle_link"
+                                            {
+                                                over "right_knuckle"
+                                                {
+                                                }
+
+                                                over "robotiq_85_right_finger_link"
+                                                {
+                                                    over "right_finger"
+                                                    {
+                                                    }
+
+                                                    over "robotiq_85_right_finger_tip_link"
+                                                    {
+                                                        over "right_finger_tip"
+                                                        {
+                                                        }
+
+                                                        over "right_finger_tip_1"
+                                                        {
+                                                        }
+                                                    }
+
+                                                    over "right_finger_1"
+                                                    {
+                                                    }
+                                                }
+
+                                                over "right_knuckle_1"
+                                                {
+                                                }
+                                            }
+
+                                            over "robotiq_85_left_inner_knuckle_link"
+                                            {
+                                                over "left_inner_knuckle"
+                                                {
+                                                }
+
+                                                over "left_inner_knuckle_1"
+                                                {
+                                                }
+                                            }
+
+                                            over "robotiq_85_right_inner_knuckle_link"
+                                            {
+                                                over "right_inner_knuckle"
+                                                {
+                                                }
+
+                                                over "right_inner_knuckle_1"
+                                                {
+                                                }
+                                            }
+
+                                            over "robotiq_base_1"
+                                            {
+                                            }
+
+                                            over "dummy_child1"
+                                            {
+                                            }
+
+                                            over "dummy_child2"
+                                            {
+                                            }
+
+                                            over "dummy_child3"
+                                            {
+                                            }
+
+                                            over "dummy_child4"
+                                            {
+                                            }
+
+                                            over "dummy_child5"
+                                            {
+                                            }
+
+                                            over "ur5e_gripper_tcp"
+                                            {
+                                            }
+                                        }
+                                    }
+                                }
+
+                                over "wrist2_link_1"
+                                {
+                                }
+                            }
+
+                            over "wrist1_link_1"
+                            {
+                            }
+                        }
+
+                        over "forearm_link_1"
+                        {
+                        }
+                    }
+
+                    over "upperarm_link_1"
+                    {
+                    }
+                }
+
+                over "shoulder_link_1"
+                {
+                }
+            }
+
+            over "base_link_1"
+            {
+            }
+        }
+    }
+
+    over "Materials"
+    {
+        over "material_1"
+        {
+        }
+
+        over "camera_black"
+        {
+        }
+
+        over "lens_black"
+        {
+        }
+    }
+
+    over "VisualMaterials"
+    {
+    }
+}
+

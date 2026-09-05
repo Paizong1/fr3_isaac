@@ -1,0 +1,27 @@
+# MoveIt uses this configuration for controller management
+
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names:
+    - fairino3_controller
+    - robotiq_gripper_controller
+
+  fairino3_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - j1
+      - j2
+      - j3
+      - j4
+      - j5
+      - j6
+
+  robotiq_gripper_controller:
+    type: GripperCommand
+    joints:
+      - robotiq_85_left_knuckle_joint
+    action_ns: gripper_cmd
+    default: true

@@ -1,0 +1,90 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <xacro:macro name="fairino3_v6_robot_ros2_control" params="name initial_positions_file controllers_file use_gazebo_ros2_control enable_grasp_fix:=false">
+        <xacro:property name="initial_positions" value="${xacro.load_yaml(initial_positions_file)['initial_positions']}"/>
+
+        <ros2_control name="${name}" type="system">
+            <hardware>
+                <xacro:if value="${use_gazebo_ros2_control}">
+                    <plugin>gazebo_ros2_control/GazeboSystem</plugin>
+                </xacro:if>
+                <xacro:unless value="${use_gazebo_ros2_control}">
+                    <plugin>mock_components/GenericSystem</plugin>
+                </xacro:unless>
+            </hardware>
+            <joint name="j1">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                  <param name="initial_value">${initial_positions['j1']}</param>
+                </state_interface>
+                <state_interface name="velocity"/>
+            </joint>
+            <joint name="j2">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                  <param name="initial_value">${initial_positions['j2']}</param>
+                </state_interface>
+                <state_interface name="velocity"/>
+            </joint>
+            <joint name="j3">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                  <param name="initial_value">${initial_positions['j3']}</param>
+                </state_interface>
+                <state_interface name="velocity"/>
+            </joint>
+            <joint name="j4">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                  <param name="initial_value">${initial_positions['j4']}</param>
+                </state_interface>
+                <state_interface name="velocity"/>
+            </joint>
+            <joint name="j5">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                  <param name="initial_value">${initial_positions['j5']}</param>
+                </state_interface>
+                <state_interface name="velocity"/>
+            </joint>
+            <joint name="j6">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                  <param name="initial_value">${initial_positions['j6']}</param>
+                </state_interface>
+                <state_interface name="velocity"/>
+            </joint>
+        </ros2_control>
+
+        <xacro:if value="${use_gazebo_ros2_control}">
+            <gazebo>
+                <static>false</static>
+                <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+                    <parameters>${controllers_file}</parameters>
+                </plugin>
+                <xacro:if value="${enable_grasp_fix}">
+                    <plugin name="gazebo_grasp_fix" filename="libgazebo_grasp_fix.so">
+                        <arm>
+                            <arm_name>robotiq_gripper_arm</arm_name>
+                            <!-- robotiq_85_base_link is lumped into wrist3_link by Gazebo fixed-joint reduction -->
+                            <palm_link>wrist3_link</palm_link>
+                            <gripper_link>robotiq_85_left_knuckle_link</gripper_link>
+                            <gripper_link>robotiq_85_right_knuckle_link</gripper_link>
+                            <gripper_link>robotiq_85_left_finger_tip_link</gripper_link>
+                            <gripper_link>robotiq_85_right_finger_tip_link</gripper_link>
+                        </arm>
+                        <forces_angle_tolerance>100</forces_angle_tolerance>
+                        <update_rate>50</update_rate>
+                        <min_gripping_contacts>1</min_gripping_contacts>
+                        <grasp_object_substring>banana</grasp_object_substring>
+                        <grip_count_threshold>1</grip_count_threshold>
+                        <max_grip_count>50</max_grip_count>
+                        <release_tolerance>0.005</release_tolerance>
+                        <disable_collisions_on_attach>true</disable_collisions_on_attach>
+                        <contact_topic>__default_topic__</contact_topic>
+                    </plugin>
+                </xacro:if>
+            </gazebo>
+        </xacro:if>
+    </xacro:macro>
+</robot>

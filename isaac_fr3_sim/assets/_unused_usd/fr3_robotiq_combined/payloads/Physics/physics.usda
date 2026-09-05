@@ -1,0 +1,549 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    defaultPrim = "fairino3_v6_robot"
+    doc = """Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\tmpjz4vvf2y\\fairino3_v6_robot.usdc
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\urdf_import_fr3_robotiq_combined_t2wuevox\\usdex_fr3_robotiq_combined\\fairino3_v6_robot.usdc
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\urdf_import_fr3_robotiq_combined_t2wuevox\\temp_fr3_robotiq_combined\\fr3_robotiq_combined.usd
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\Desktop\\work\\Issac_fr3\\FR3\\isaac_fr3_sim\\assets\\fr3_robotiq_combined\\payloads\\base.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "fairino3_v6_robot"
+{
+    over "Geometry"
+    {
+        over "base_link" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI", "PhysicsMassAPI"]
+        )
+        {
+            bool newton:selfCollisionEnabled = 0
+            point3f physics:centerOfMass = (-0.00049027, -0.00045095, 0.032527)
+            float3 physics:diagonalInertia = (0.0013736918, 0.0013962496, 0.0019773585)
+            float physics:mass = 0.78393
+            quatf physics:principalAxes = (-0.0051804506, 0.38744992, 0.9218071, 0.011287017)
+
+            over "shoulder_link" (
+                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (-3.8658e-7, -0.0024176, 0.13519)
+                float3 physics:diagonalInertia = (0.0023108425, 0.0032439574, 0.0033227)
+                float physics:mass = 2.1225
+                quatf physics:principalAxes = (0.7069185, -0.016378006, 0.70690495, 0.016834805)
+
+                over "upperarm_link" (
+                    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (-0.14111, 0.0000034656, 0.11053)
+                    float3 physics:diagonalInertia = (0.0059231, 0.0075944997, 0.008131701)
+                    float physics:mass = 4.8053
+                    quatf physics:principalAxes = (0.49982712, 0.50017285, 0.49982712, 0.5001728)
+
+                    over "forearm_link" (
+                        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (-0.18987, 0.0000052268, 0.0034145)
+                        float3 physics:diagonalInertia = (0.0028627827, 0.0029410163, 0.003514501)
+                        float physics:mass = 2.2312
+                        quatf physics:principalAxes = (0.67939764, -0.6787884, 0.19741173, -0.19670713)
+
+                        over "wrist1_link" (
+                            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                        )
+                        {
+                            point3f physics:centerOfMass = (4.5665e-7, -0.0034666, 0.098292)
+                            float3 physics:diagonalInertia = (0.0014500897, 0.0019099102, 0.0020112)
+                            float physics:mass = 1.5961
+                            quatf physics:principalAxes = (0.5174752, -0.4818869, -0.5173591, -0.4820208)
+
+                            over "wrist2_link" (
+                                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                            )
+                            {
+                                point3f physics:centerOfMass = (-4.5262e-7, 0.0034666, 0.098292)
+                                float3 physics:diagonalInertia = (0.0014500897, 0.0019099102, 0.0020112)
+                                float physics:mass = 1.5961
+                                quatf physics:principalAxes = (-0.4818869, 0.5174752, 0.4820208, 0.5173591)
+
+                                over "wrist3_link" (
+                                    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                )
+                                {
+                                    point3f physics:centerOfMass = (0.00007559, 0.000013858, 0.076619)
+                                    float3 physics:diagonalInertia = (0.00028784986, 0.00028895977, 0.00042655037)
+                                    float physics:mass = 0.53877
+                                    quatf physics:principalAxes = (0.9999993, 0.00065872446, 0.0005002444, -0.00084522)
+
+                                    over "wrist_camera_link" (
+                                        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+                                    )
+                                    {
+                                        over "box_1" (
+                                            prepend apiSchemas = ["NewtonCollisionAPI"]
+                                        )
+                                        {
+                                        }
+                                    }
+
+                                    over "tool0"
+                                    {
+                                        over "robotiq_85_base_link" (
+                                            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                        )
+                                        {
+                                            point3f physics:centerOfMass = (0, 0.00002274, 0.03232288)
+                                            float3 physics:diagonalInertia = (0.00039462722, 0.00051617814, 0.00058802264)
+                                            float physics:mass = 0.663202
+                                            quatf physics:principalAxes = (0.49947998, 0.5005193, 0.5003153, 0.4996847)
+
+                                            over "robotiq_85_left_knuckle_link" (
+                                                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                            )
+                                            {
+                                                point3f physics:centerOfMass = (0.01213197, 0.0002, -0.00058647)
+                                                float3 physics:diagonalInertia = (3.4500846e-7, 0.0000022386716, 0.00000231944)
+                                                float physics:mass = 0.013847732
+                                                quatf physics:principalAxes = (-0.7067651, 0.7067651, 0.021979524, -0.021979524)
+
+                                                over "robotiq_85_left_finger_link" (
+                                                    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                                )
+                                                {
+                                                    point3f physics:centerOfMass = (0.00346899, -0.00079447, 0.01867121)
+                                                    float3 physics:diagonalInertia = (0.000004682275, 0.00001183208, 0.000014372365)
+                                                    float physics:mass = 0.04260377
+                                                    quatf physics:principalAxes = (0.78435075, 1.7693344e-17, 0.6203176, -1.3536424e-16)
+
+                                                    over "robotiq_85_left_finger_tip_link" (
+                                                        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                                    )
+                                                    {
+                                                        point3f physics:centerOfMass = (-0.01456706, -0.0008, 0.01649701)
+                                                        float3 physics:diagonalInertia = (0.0000026440466, 0.00001197888, 0.000012065313)
+                                                        float physics:mass = 0.04268589
+                                                        quatf physics:principalAxes = (0.54313433, 0, 0.8396458, 0)
+                                                    }
+                                                }
+                                            }
+
+                                            over "robotiq_85_right_knuckle_link" (
+                                                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                            )
+                                            {
+                                                point3f physics:centerOfMass = (-0.01213197, 0.0002, -0.00058647)
+                                                float3 physics:diagonalInertia = (3.4500846e-7, 0.0000022386716, 0.00000231944)
+                                                float physics:mass = 0.013847732
+                                                quatf physics:principalAxes = (0.7067651, -0.7067651, 0.021979524, -0.021979524)
+
+                                                over "robotiq_85_right_finger_link" (
+                                                    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                                )
+                                                {
+                                                    point3f physics:centerOfMass = (-0.00346899, -0.00000553, 0.01867121)
+                                                    float3 physics:diagonalInertia = (0.000004682275, 0.00001183208, 0.000014372365)
+                                                    float physics:mass = 0.04260377
+                                                    quatf physics:principalAxes = (0.6203176, -1.3536424e-16, 0.78435075, 1.7693344e-17)
+
+                                                    over "robotiq_85_right_finger_tip_link" (
+                                                        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                                    )
+                                                    {
+                                                        point3f physics:centerOfMass = (0.01456706, 0.00005, 0.01649701)
+                                                        float3 physics:diagonalInertia = (0.0000026440466, 0.00001197888, 0.000012065313)
+                                                        float physics:mass = 0.04268589
+                                                        quatf physics:principalAxes = (0.8396458, 0, 0.54313433, 0)
+                                                    }
+                                                }
+                                            }
+
+                                            over "robotiq_85_left_inner_knuckle_link" (
+                                                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                            )
+                                            {
+                                                point3f physics:centerOfMass = (0.01897699, 0.00015001, 0.02247101)
+                                                float3 physics:diagonalInertia = (0.000004887118, 0.00000869056, 0.000012875682)
+                                                float physics:mass = 0.029693764
+                                                quatf physics:principalAxes = (0.9064055, 3.0621588e-17, 0.4224086, 2.0734926e-16)
+                                            }
+
+                                            over "robotiq_85_right_inner_knuckle_link" (
+                                                prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                                            )
+                                            {
+                                                point3f physics:centerOfMass = (-0.01926824, 0.00005001, 0.02222178)
+                                                float3 physics:diagonalInertia = (0.0000048807565, 0.00000869056, 0.000012882044)
+                                                float physics:mass = 0.029693764
+                                                quatf physics:principalAxes = (0.41391107, -2.0694741e-16, 0.9103173, -6.098e-17)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    over "Physics"
+    {
+        def PhysicsRevoluteJoint "j1" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 150
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link>
+            point3f physics:localPos0 = (0, 0, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -174.9985
+            float physics:upperLimit = 174.9985
+            custom float urdf:calibration:falling = 0
+            custom float urdf:calibration:rising = 0
+            custom float urdf:dynamics:damping = 0
+            custom float urdf:dynamics:friction = 0
+            custom float urdf:limit:effort = 150
+            custom float urdf:limit:velocity = 3.15
+            custom float urdf:safety_controller:k_position = 15
+            custom float urdf:safety_controller:k_velocity = 10
+            custom float urdf:safety_controller:soft_lower_limit = -3.0543
+            custom float urdf:safety_controller:soft_upper_limit = 3.0543
+        }
+
+        def PhysicsRevoluteJoint "j2" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 150
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link>
+            point3f physics:localPos0 = (0, 0, 0.14)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0.70710546, 0.7071081, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -264.99872
+            float physics:upperLimit = 84.99829
+            custom float urdf:calibration:falling = 0
+            custom float urdf:calibration:rising = 0
+            custom float urdf:dynamics:damping = 0
+            custom float urdf:dynamics:friction = 0
+            custom float urdf:limit:effort = 150
+            custom float urdf:limit:velocity = 3.15
+            custom float urdf:safety_controller:k_position = 15
+            custom float urdf:safety_controller:k_velocity = 10
+            custom float urdf:safety_controller:soft_lower_limit = -4.6251
+            custom float urdf:safety_controller:soft_upper_limit = 1.4835
+        }
+
+        def PhysicsRevoluteJoint "j3" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 150
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link>
+            point3f physics:localPos0 = (-0.28, -2.7755576e-17, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -161.9981
+            float physics:upperLimit = 161.9981
+            custom float urdf:calibration:falling = 0
+            custom float urdf:calibration:rising = 0
+            custom float urdf:dynamics:damping = 0
+            custom float urdf:dynamics:friction = 0
+            custom float urdf:limit:effort = 150
+            custom float urdf:limit:velocity = 3.15
+            custom float urdf:safety_controller:k_position = 15
+            custom float urdf:safety_controller:k_velocity = 10
+            custom float urdf:safety_controller:soft_lower_limit = -2.8274
+            custom float urdf:safety_controller:soft_upper_limit = 2.8274
+        }
+
+        def PhysicsRevoluteJoint "j4" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 28
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link>
+            point3f physics:localPos0 = (-0.24001, -2.7755576e-17, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -264.99872
+            float physics:upperLimit = 84.99829
+            custom float urdf:calibration:falling = 0
+            custom float urdf:calibration:rising = 0
+            custom float urdf:dynamics:damping = 0
+            custom float urdf:dynamics:friction = 0
+            custom float urdf:limit:effort = 28
+            custom float urdf:limit:velocity = 3.2
+            custom float urdf:safety_controller:k_position = 15
+            custom float urdf:safety_controller:k_velocity = 10
+            custom float urdf:safety_controller:soft_lower_limit = -4.6251
+            custom float urdf:safety_controller:soft_upper_limit = 1.4835
+        }
+
+        def PhysicsRevoluteJoint "j5" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 28
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link>
+            point3f physics:localPos0 = (0, -2.7755576e-17, 0.102)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0.70710546, 0.7071081, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -174.9985
+            float physics:upperLimit = 174.9985
+            custom float urdf:calibration:falling = 0
+            custom float urdf:calibration:rising = 0
+            custom float urdf:dynamics:damping = 0
+            custom float urdf:dynamics:friction = 0
+            custom float urdf:limit:effort = 28
+            custom float urdf:limit:velocity = 3.2
+            custom float urdf:safety_controller:k_position = 15
+            custom float urdf:safety_controller:k_velocity = 10
+            custom float urdf:safety_controller:soft_lower_limit = -3.0543
+            custom float urdf:safety_controller:soft_upper_limit = 3.0543
+        }
+
+        def PhysicsRevoluteJoint "j6" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 28
+            uniform token physics:axis = "Z"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link>
+            point3f physics:localPos0 = (0, 1.3877788e-17, 0.102)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0.70710546, -0.7071081, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -174.9985
+            float physics:upperLimit = 174.9985
+            custom float urdf:calibration:falling = 0
+            custom float urdf:calibration:rising = 0
+            custom float urdf:dynamics:damping = 0
+            custom float urdf:dynamics:friction = 0
+            custom float urdf:limit:effort = 28
+            custom float urdf:limit:velocity = 3.2
+            custom float urdf:safety_controller:k_position = 15
+            custom float urdf:safety_controller:k_velocity = 10
+            custom float urdf:safety_controller:soft_lower_limit = -3.0543
+            custom float urdf:safety_controller:soft_upper_limit = 3.0543
+        }
+
+        def PhysicsRevoluteJoint "robotiq_85_left_knuckle_joint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 50
+            uniform token physics:axis = "Y"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_left_knuckle_link>
+            point3f physics:localPos0 = (0.03060114, 0, 0.05490452)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0, -1, 0, 0)
+            quatf physics:localRot1 = (0, -1, 0, 0)
+            float physics:lowerLimit = 0
+            float physics:upperLimit = 45.836624
+            custom float urdf:limit:effort = 50
+            custom float urdf:limit:velocity = 0.5
+        }
+
+        def PhysicsRevoluteJoint "robotiq_85_right_knuckle_joint" (
+            prepend apiSchemas = ["NewtonMimicAPI", "PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float drive:angular:physics:maxForce = 50
+            float newton:mimicCoef1 = -1
+            rel newton:mimicJoint = </fairino3_v6_robot/Physics/robotiq_85_left_knuckle_joint>
+            uniform token physics:axis = "Y"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_right_knuckle_link>
+            point3f physics:localPos0 = (-0.03060114, 0, 0.05490452)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0, -1, 0, 0)
+            quatf physics:localRot1 = (0, -1, 0, 0)
+            float physics:lowerLimit = -45.836624
+            float physics:upperLimit = 0
+            custom float urdf:limit:effort = 50
+            custom float urdf:limit:velocity = 0.5
+        }
+
+        def PhysicsRevoluteJoint "robotiq_85_left_inner_knuckle_joint" (
+            prepend apiSchemas = ["NewtonMimicAPI", "PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            rel newton:mimicJoint = </fairino3_v6_robot/Physics/robotiq_85_left_knuckle_joint>
+            uniform token physics:axis = "Y"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_left_inner_knuckle_link>
+            point3f physics:localPos0 = (0.0127, 0, 0.06142)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0, -1, 0, 0)
+            quatf physics:localRot1 = (0, -1, 0, 0)
+            float physics:lowerLimit = -45.836624
+            float physics:upperLimit = 45.836624
+        }
+
+        def PhysicsRevoluteJoint "robotiq_85_right_inner_knuckle_joint" (
+            prepend apiSchemas = ["NewtonMimicAPI", "PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float newton:mimicCoef1 = -1
+            rel newton:mimicJoint = </fairino3_v6_robot/Physics/robotiq_85_left_knuckle_joint>
+            uniform token physics:axis = "Y"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_right_inner_knuckle_link>
+            point3f physics:localPos0 = (-0.0127, 0, 0.06142)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0, -1, 0, 0)
+            quatf physics:localRot1 = (0, -1, 0, 0)
+            float physics:lowerLimit = -45.836624
+            float physics:upperLimit = 45.836624
+        }
+
+        def PhysicsRevoluteJoint "robotiq_85_left_finger_tip_joint" (
+            prepend apiSchemas = ["NewtonMimicAPI", "PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            float newton:mimicCoef1 = -1
+            rel newton:mimicJoint = </fairino3_v6_robot/Physics/robotiq_85_left_knuckle_joint>
+            uniform token physics:axis = "Y"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_left_knuckle_link/robotiq_85_left_finger_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_left_knuckle_link/robotiq_85_left_finger_link/robotiq_85_left_finger_tip_link>
+            point3f physics:localPos0 = (0.00563134, 0, 0.04718515)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0, -1, 0, 0)
+            quatf physics:localRot1 = (0, -1, 0, 0)
+            float physics:lowerLimit = -45.836624
+            float physics:upperLimit = 45.836624
+        }
+
+        def PhysicsRevoluteJoint "robotiq_85_right_finger_tip_joint" (
+            prepend apiSchemas = ["NewtonMimicAPI", "PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+        )
+        {
+            rel newton:mimicJoint = </fairino3_v6_robot/Physics/robotiq_85_left_knuckle_joint>
+            uniform token physics:axis = "Y"
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_right_knuckle_link/robotiq_85_right_finger_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_right_knuckle_link/robotiq_85_right_finger_link/robotiq_85_right_finger_tip_link>
+            point3f physics:localPos0 = (-0.00563134, 0, 0.04718515)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (0, -1, 0, 0)
+            quatf physics:localRot1 = (0, -1, 0, 0)
+            float physics:lowerLimit = -45.836624
+            float physics:upperLimit = 45.836624
+        }
+
+        def PhysicsFixedJoint "root_joint"
+        {
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link>
+            point3f physics:localPos0 = (0, 0, 0)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "wrist_camera_joint"
+        {
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/wrist_camera_link>
+            point3f physics:localPos0 = (0.12, 0, 0.06)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (-9.38184e-7, -0.7071081, 9.381874e-7, -0.70710546)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "robotiq_85_base_joint"
+        {
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link>
+            point3f physics:localPos0 = (0, 0, 2.7755576e-17)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "robotiq_85_left_finger_joint"
+        {
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_left_knuckle_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_left_knuckle_link/robotiq_85_left_finger_link>
+            point3f physics:localPos0 = (0.03152616, 0, -0.00376347)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "robotiq_85_right_finger_joint"
+        {
+            custom rel physics:body0
+            prepend rel physics:body0 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_right_knuckle_link>
+            custom rel physics:body1
+            prepend rel physics:body1 = </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/tool0/robotiq_85_base_link/robotiq_85_right_knuckle_link/robotiq_85_right_finger_link>
+            point3f physics:localPos0 = (-0.03152616, 0, -0.00376347)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+    }
+}

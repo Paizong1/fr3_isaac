@@ -1,0 +1,18 @@
+# Keep these names stable so the existing YOLO and MoveIt nodes can be reused.
+clock: /clock
+joint_states: /joint_states
+tf: /tf
+tf_static: /tf_static
+joint_trajectory_command: /fairino3_controller/joint_trajectory
+gripper_action: /robotiq_gripper_controller/gripper_cmd
+# Internal bridge between the WSL GripperCommand Action and Isaac Sim.
+gripper_position_command: /robotiq_gripper_controller/position_command
+gripper_position_state: /robotiq_gripper_controller/position_state
+rgb_image: /wrist_camera/image_raw
+depth_image: /wrist_camera/depth/image_raw
+camera_info: /wrist_camera/depth/camera_info
+yolo_target_pose: /yolo/target_pose
+yolo_detections: /yolo/detections
+yolo_detections_3d: /yolo/detections_3d
+grasp_state: /world_model/grasp_state
+yolo_debug_image: /yolo/dbg_image

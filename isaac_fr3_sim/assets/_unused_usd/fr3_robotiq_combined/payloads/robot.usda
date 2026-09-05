@@ -1,0 +1,230 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "URDF USD Converter v0.1.3"
+    }
+    defaultPrim = "fairino3_v6_robot"
+    doc = """Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\tmpjz4vvf2y\\fairino3_v6_robot.usdc
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\urdf_import_fr3_robotiq_combined_t2wuevox\\usdex_fr3_robotiq_combined\\fairino3_v6_robot.usdc
+
+
+Generated from Composed Stage of root layer C:\\Users\\20855\\AppData\\Local\\Temp\\urdf_import_fr3_robotiq_combined_t2wuevox\\temp_fr3_robotiq_combined\\fr3_robotiq_combined.usd
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "fairino3_v6_robot" (
+    prepend apiSchemas = ["IsaacRobotAPI"]
+)
+{
+    prepend rel isaac:physics:robotJoints = [
+        </fairino3_v6_robot/Physics/root_joint>,
+        </fairino3_v6_robot/Physics/j1>,
+        </fairino3_v6_robot/Physics/j2>,
+        </fairino3_v6_robot/Physics/j3>,
+        </fairino3_v6_robot/Physics/j4>,
+        </fairino3_v6_robot/Physics/j5>,
+        </fairino3_v6_robot/Physics/j6>,
+        </fairino3_v6_robot/Physics/wrist_camera_joint>,
+    ]
+    prepend rel isaac:physics:robotLinks = [
+        </fairino3_v6_robot/Geometry/base_link>,
+        </fairino3_v6_robot/Geometry/base_link/shoulder_link>,
+        </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link>,
+        </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link>,
+        </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link>,
+        </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link>,
+        </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link>,
+        </fairino3_v6_robot/Geometry/base_link/shoulder_link/upperarm_link/forearm_link/wrist1_link/wrist2_link/wrist3_link/wrist_camera_link>,
+    ]
+    token isaac:robotType = "Default"
+
+    over "Geometry"
+    {
+        over "base_link" (
+            prepend apiSchemas = ["IsaacLinkAPI"]
+        )
+        {
+            over "base_link" (
+                prepend apiSchemas = ["IsaacSiteAPI"]
+            )
+            {
+            }
+
+            over "shoulder_link" (
+                prepend apiSchemas = ["IsaacLinkAPI"]
+            )
+            {
+                over "shoulder_link" (
+                    prepend apiSchemas = ["IsaacSiteAPI"]
+                )
+                {
+                }
+
+                over "upperarm_link" (
+                    prepend apiSchemas = ["IsaacLinkAPI"]
+                )
+                {
+                    over "upperarm_link" (
+                        prepend apiSchemas = ["IsaacSiteAPI"]
+                    )
+                    {
+                    }
+
+                    over "forearm_link" (
+                        prepend apiSchemas = ["IsaacLinkAPI"]
+                    )
+                    {
+                        over "forearm_link" (
+                            prepend apiSchemas = ["IsaacSiteAPI"]
+                        )
+                        {
+                        }
+
+                        over "wrist1_link" (
+                            prepend apiSchemas = ["IsaacLinkAPI"]
+                        )
+                        {
+                            over "wrist1_link" (
+                                prepend apiSchemas = ["IsaacSiteAPI"]
+                            )
+                            {
+                            }
+
+                            over "wrist2_link" (
+                                prepend apiSchemas = ["IsaacLinkAPI"]
+                            )
+                            {
+                                over "wrist2_link" (
+                                    prepend apiSchemas = ["IsaacSiteAPI"]
+                                )
+                                {
+                                }
+
+                                over "wrist3_link" (
+                                    prepend apiSchemas = ["IsaacLinkAPI"]
+                                )
+                                {
+                                    over "wrist3_link" (
+                                        prepend apiSchemas = ["IsaacSiteAPI"]
+                                    )
+                                    {
+                                    }
+
+                                    over "wrist_camera_link" (
+                                        prepend apiSchemas = ["IsaacLinkAPI"]
+                                    )
+                                    {
+                                        over "wrist_camera_optical_frame" (
+                                            prepend apiSchemas = ["IsaacSiteAPI"]
+                                        )
+                                        {
+                                        }
+                                    }
+
+                                    over "wrist3_link_1" (
+                                        prepend apiSchemas = ["IsaacSiteAPI"]
+                                    )
+                                    {
+                                    }
+                                }
+
+                                over "wrist2_link_1" (
+                                    prepend apiSchemas = ["IsaacSiteAPI"]
+                                )
+                                {
+                                }
+                            }
+
+                            over "wrist1_link_1" (
+                                prepend apiSchemas = ["IsaacSiteAPI"]
+                            )
+                            {
+                            }
+                        }
+
+                        over "forearm_link_1" (
+                            prepend apiSchemas = ["IsaacSiteAPI"]
+                        )
+                        {
+                        }
+                    }
+
+                    over "upperarm_link_1" (
+                        prepend apiSchemas = ["IsaacSiteAPI"]
+                    )
+                    {
+                    }
+                }
+
+                over "shoulder_link_1" (
+                    prepend apiSchemas = ["IsaacSiteAPI"]
+                )
+                {
+                }
+            }
+
+            over "base_link_1" (
+                prepend apiSchemas = ["IsaacSiteAPI"]
+            )
+            {
+            }
+        }
+    }
+
+    over "Physics"
+    {
+        over "root_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "j1" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "j2" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "j3" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "j4" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "j5" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "j6" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+
+        over "wrist_camera_joint" (
+            prepend apiSchemas = ["IsaacJointAPI"]
+        )
+        {
+        }
+    }
+}
+

@@ -1,0 +1,10 @@
+# Default initial positions for fairino3_v6_robot's ros2_control fake system
+
+initial_positions:
+  j1: 1.2
+  j2: -1.2
+  j3: 1.0
+  j4: -1.8
+  j5: -1.57
+  j6: 0
+  robotiq_85_left_knuckle_joint: 0.0

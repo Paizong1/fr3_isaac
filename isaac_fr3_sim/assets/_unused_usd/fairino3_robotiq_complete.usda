@@ -1,0 +1,21 @@
+#usda 1.0
+(
+    defaultPrim = "fairino3_v6_robot"
+    subLayers = [ @../../fairino3_robotiq.usd@ ]
+)
+
+over "fairino3_v6_robot"
+{
+    def Camera "wrist_camera" (
+        prepend apiSchemas = [ "IsaacCamera" ]
+    )
+    {
+        double3 xformOp:translate = (0.12, 0, 0.06)
+        double3 xformOp:rotateXYZ = (0, -90, 180)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+        float focalLength = 24
+        string isaac:ros2:rgb_topic = "wrist_camera/image_raw"
+        string isaac:ros2:depth_topic = "wrist_camera/depth/image_raw"
+        string isaac:ros2:frame_id = "wrist_camera_optical_frame"
+    }
+}

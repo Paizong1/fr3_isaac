@@ -1,0 +1,133 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fairino3_v6_robot">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+    <xacro:arg name="controllers_file" default="" />
+    <xacro:arg name="use_gazebo_ros2_control" default="false" />
+    <xacro:arg name="use_fixed_base" default="false" />
+    <xacro:arg name="add_wrist_camera" default="true" />
+    <xacro:arg name="add_robotiq_gripper" default="true" />
+    <xacro:arg name="enable_grasp_fix" default="true" />
+
+    <!-- Import fairino3_v6_robot urdf file -->
+    <xacro:include filename="$(find fairino_description)/urdf/fairino3_v6.urdf" />
+    <xacro:if value="$(arg add_robotiq_gripper)">
+        <xacro:include filename="$(find robotiq_description)/urdf/robotiq_2f_85_macro.urdf.xacro" />
+    </xacro:if>
+
+    <xacro:if value="$(arg use_fixed_base)">
+        <gazebo reference="base_link">
+            <gravity>false</gravity>
+            <kinematic>true</kinematic>
+        </gazebo>
+    </xacro:if>
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="fairino3_v6_robot.ros2_control.xacro" />
+
+    <xacro:if value="$(arg add_wrist_camera)">
+        <link name="wrist_camera_link">
+            <visual>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <box size="0.03 0.03 0.02" />
+                </geometry>
+                <material name="camera_black">
+                    <color rgba="0.05 0.05 0.05 1.0" />
+                </material>
+            </visual>
+            <visual>
+                <origin xyz="0.018 0 0" rpy="0 1.5708 0" />
+                <geometry>
+                    <cylinder radius="0.007" length="0.006" />
+                </geometry>
+                <material name="lens_black">
+                    <color rgba="0.0 0.0 0.0 1.0" />
+                </material>
+            </visual>
+            <collision>
+                <origin xyz="0 0 0" rpy="0 0 0" />
+                <geometry>
+                    <box size="0.03 0.03 0.02" />
+                </geometry>
+            </collision>
+        </link>
+        <joint name="wrist_camera_joint" type="fixed">
+            <parent link="wrist3_link" />
+            <child link="wrist_camera_link" />
+            <origin xyz="0.12 0 0.06" rpy="0 -1.5708 3.14159" />
+        </joint>
+
+        <link name="wrist_camera_optical_frame" />
+        <joint name="wrist_camera_optical_joint" type="fixed">
+            <parent link="wrist_camera_link" />
+            <child link="wrist_camera_optical_frame" />
+            <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708" />
+        </joint>
+
+        <gazebo reference="wrist_camera_link">
+            <sensor type="depth" name="wrist_camera">
+                <update_rate>30</update_rate>
+                <visualize>true</visualize>
+                <camera name="wrist_camera">
+                    <horizontal_fov>1.047</horizontal_fov>
+                    <image>
+                        <width>640</width>
+                        <height>480</height>
+                        <format>B8G8R8</format>
+                    </image>
+                    <depth_camera>
+                    </depth_camera>
+                    <clip>
+                        <near>0.02</near>
+                        <far>5.0</far>
+                    </clip>
+                </camera>
+                <plugin name="gazebo_ros_camera" filename="libgazebo_ros_camera.so">
+                    <camera_name>wrist_camera</camera_name>
+                    <frame_name>wrist_camera_optical_frame</frame_name>
+                    <min_depth>0.05</min_depth>
+                    <max_depth>5.0</max_depth>
+                </plugin>
+            </sensor>
+        </gazebo>
+    </xacro:if>
+
+    <link name="tool0" />
+    <joint name="wrist3_tool0" type="fixed">
+        <parent link="wrist3_link" />
+        <child link="tool0" />
+        <origin xyz="0 0 0.1" rpy="0 0 0" />
+    </joint>
+
+    <link name="ur5e_gripper_tcp" />
+    <xacro:if value="$(arg add_robotiq_gripper)">
+        <xacro:robotiq_gripper
+            name="RobotiqGripperHardwareInterface"
+            prefix=""
+            parent="tool0"
+            include_ros2_control="true">
+            <origin xyz="0 0 0" rpy="0 0 0" />
+        </xacro:robotiq_gripper>
+        <joint name="ur5e_gripper_tcp_joint" type="fixed">
+            <parent link="robotiq_85_base_link" />
+            <child link="ur5e_gripper_tcp" />
+            <origin xyz="0.000532 0.000127 0.000953" rpy="0.000024 -0.000170 -0.000786" />
+        </joint>
+    </xacro:if>
+    <xacro:unless value="$(arg add_robotiq_gripper)">
+        <joint name="ur5e_gripper_tcp_joint" type="fixed">
+            <parent link="tool0" />
+            <child link="ur5e_gripper_tcp" />
+            <origin xyz="0 0 0.18" rpy="0 0 0" />
+        </joint>
+    </xacro:unless>
+
+    <xacro:fairino3_v6_robot_ros2_control
+        name="FairinoSystem"
+        initial_positions_file="$(arg initial_positions_file)"
+        controllers_file="$(arg controllers_file)"
+        use_gazebo_ros2_control="$(arg use_gazebo_ros2_control)"
+        enable_grasp_fix="$(arg enable_grasp_fix)"
+    />
+
+</robot>
