@@ -208,9 +208,9 @@ bool execute_trajectory(
   try {
     robot_trajectory::RobotTrajectory rt(robot_model, group_name);
     rt.setRobotTrajectoryMsg(start_state, trajectory);
-    trajectory_processing::IterativeParabolicTimeParameterization iptp;
     const double v = std::max(0.0, std::min(1.0, vel_scale));
     const double a = std::max(0.0, std::min(1.0, acc_scale));
+    trajectory_processing::IterativeParabolicTimeParameterization iptp;
     const bool ok = iptp.computeTimeStamps(rt, v, a);
     if (ok) {
       rt.getRobotTrajectoryMsg(timed);
@@ -500,7 +500,7 @@ int main(int argc, char ** argv)
   const double pregrasp_fallback_ori_tolerance =
     declare_or_get_parameter<double>(node, "pregrasp_fallback_ori_tolerance", 1.57);
   const bool pregrasp_fallback_position_only =
-    declare_or_get_parameter<bool>(node, "pregrasp_fallback_position_only", true);
+    declare_or_get_parameter<bool>(node, "pregrasp_fallback_position_only", false);
   const double pregrasp_fallback_planning_time =
     declare_or_get_parameter<double>(node, "pregrasp_fallback_planning_time", 10.0);
   const int pregrasp_fallback_planning_attempts =

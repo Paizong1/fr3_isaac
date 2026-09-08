@@ -90,6 +90,19 @@ class TrajectoryExecutor:
 
         if queue_active:
             offset = self.points[-1][0]
+            previous = self.points[-2] if len(self.points) > 1 else (0.0, self.start_positions)
+            current = self.points[-1]
+            following = (offset + points[0][0], points[0][1])
+            zero_tangent_joints = [
+                name for name, velocity in zip(
+                    ARM_JOINTS, self._knot_velocity(previous, current, following)
+                ) if abs(velocity) < 1e-6
+            ]
+            if zero_tangent_joints:
+                print(
+                    "[bridge] queued trajectory junction has zero tangent: "
+                    + ", ".join(zero_tangent_joints), flush=True
+                )
             self.points += tuple((offset + point_time, positions) for point_time, positions in points)
         else:
             self.start_time = now
@@ -101,17 +114,61 @@ class TrajectoryExecutor:
         if not self.points:
             return None
         elapsed = max(0.0, now - self.start_time)
-        first_time, first_positions = self.points[0]
-        if elapsed <= first_time:
-            return self._interpolate(self.start_positions, first_positions, elapsed / first_time) if first_time else first_positions
-        for (left_time, left_positions), (right_time, right_positions) in zip(self.points, self.points[1:]):
+        knots = ((0.0, self.start_positions),) + self.points
+        for index, ((left_time, left_positions), (right_time, right_positions)) in enumerate(
+            zip(knots, knots[1:])
+        ):
             if elapsed <= right_time:
-                return self._interpolate(left_positions, right_positions, (elapsed - left_time) / (right_time - left_time))
+                previous = knots[index - 1] if index else None
+                following = knots[index + 2] if index + 2 < len(knots) else None
+                duration = right_time - left_time
+                return self._interpolate(
+                    left_positions,
+                    right_positions,
+                    self._knot_velocity(previous, (left_time, left_positions), (right_time, right_positions)),
+                    self._knot_velocity((left_time, left_positions), (right_time, right_positions), following),
+                    duration,
+                    (elapsed - left_time) / duration,
+                )
         return self.points[-1][1]
 
     @staticmethod
-    def _interpolate(left, right, ratio):
-        return tuple(a + (b - a) * ratio for a, b in zip(left, right))
+    def _knot_velocity(previous, current, following):
+        if previous is None or following is None:
+            return (0.0,) * len(current[1])
+        previous_time, previous_positions = previous
+        current_time, current_positions = current
+        following_time, following_positions = following
+        left_duration = current_time - previous_time
+        right_duration = following_time - current_time
+        velocities = []
+        for before, position, after in zip(previous_positions, current_positions, following_positions):
+            left_slope = (position - before) / left_duration
+            right_slope = (after - position) / right_duration
+            if left_slope * right_slope <= 0.0:
+                velocities.append(0.0)
+                continue
+            left_weight = 2.0 * right_duration + left_duration
+            right_weight = right_duration + 2.0 * left_duration
+            velocities.append(
+                (left_weight + right_weight) /
+                (left_weight / left_slope + right_weight / right_slope)
+            )
+        return tuple(velocities)
+
+    @staticmethod
+    def _interpolate(left, right, left_velocity, right_velocity, duration, ratio):
+        ratio = max(0.0, min(1.0, ratio))
+        ratio2 = ratio * ratio
+        ratio3 = ratio2 * ratio
+        h00 = 2.0 * ratio3 - 3.0 * ratio2 + 1.0
+        h10 = ratio3 - 2.0 * ratio2 + ratio
+        h01 = -2.0 * ratio3 + 3.0 * ratio2
+        h11 = ratio3 - ratio2
+        return tuple(
+            h00 * a + h10 * duration * va + h01 * b + h11 * duration * vb
+            for a, b, va, vb in zip(left, right, left_velocity, right_velocity)
+        )
 
 
 class GripperRamp:
@@ -168,8 +225,13 @@ def run_trajectory_self_test() -> None:
 
     executor = TrajectoryExecutor({name: (-10.0, 10.0) for name in ARM_JOINTS})
     assert executor.submit(Message(), 10.0, [0.0] * 6) is None
-    assert executor.target_at(10.5) == (0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
-    assert executor.target_at(11.5) == (1.5, 2.5, 3.5, 4.5, 5.5, 6.0)
+    assert all(math.isclose(actual, expected) for actual, expected in zip(
+        executor.target_at(10.5), (0.375, 5.0 / 6.0, 1.3125, 1.8, 2.2916666666666665, 3.0)
+    ))
+    assert executor.target_at(11.0) == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    assert executor.target_at(12.0) == (2.0, 3.0, 4.0, 5.0, 6.0, 6.0)
+    assert TrajectoryExecutor._knot_velocity((0.0, (0.0,)), (1.0, (1.0,)), (2.0, (2.0,))) == (1.0,)
+    assert TrajectoryExecutor._knot_velocity((0.0, (0.0,)), (1.0, (1.0,)), (2.0, (0.0,))) == (0.0,)
     class SinglePointMessage:
         joint_names = list(ARM_JOINTS)
 
@@ -179,7 +241,7 @@ def run_trajectory_self_test() -> None:
     queued = TrajectoryExecutor({name: (-10.0, 10.0) for name in ARM_JOINTS})
     assert queued.submit(SinglePointMessage([1] * 6), 20.0, [0.0] * 6) is None
     assert queued.submit(SinglePointMessage([2] * 6), 20.0, [0.0] * 6, append=True) is None
-    assert queued.target_at(21.5) == (1.5,) * 6
+    assert queued.target_at(21.5) == (1.625,) * 6
     assert queued.submit(SinglePointMessage([2] * 6), 23.0, [2.0, 2.012, 2.0, 2.0, 2.0, 2.0], append=True) is None
     assert math.isclose(queued.points[-1][1][1], 1.988, abs_tol=1e-12)
     Message.joint_names = [*ARM_JOINTS[:-1], "robotiq_85_left_knuckle_joint"]
@@ -650,6 +712,11 @@ def main() -> int:
             + ", ".join(f"{name}=[{lower:.4f}, {upper:.4f}]" for name, (lower, upper) in arm_limits.items()),
             flush=True,
         )
+        startup_hold_positions = tuple(
+            float(position) for position in articulation.get_joint_positions()[0, arm_indices]
+        )
+        articulation.set_joint_position_targets(startup_hold_positions, joint_indices=arm_indices)
+        print("[bridge] startup hold: arm targets initialized from current positions", flush=True)
         smoke_target = None
         smoke_error = None
         if args.drive_smoke_test:
@@ -672,6 +739,7 @@ def main() -> int:
         executor = TrajectoryExecutor(arm_limits)
         gripper_ramp = GripperRamp()
         bilateral_contacts = {"left": False, "right": False}
+        bilateral_wait_reported = False
 
         master_index = articulation_names.index(GRIPPER_MASTER_JOINT)
         rclpy.init(args=None)
@@ -888,6 +956,15 @@ def main() -> int:
                     pad_separations.get(side, float("inf")) <= BILATERAL_CONTACT_DISTANCE_M
                     for side in bilateral_pads
                 )
+                if close_active and not both_near and not bilateral_wait_reported:
+                    print(
+                        "[bridge] bilateral attach waiting: "
+                        f"left={pad_separations.get('left', float('inf')):.4f}m "
+                        f"right={pad_separations.get('right', float('inf')):.4f}m "
+                        f"threshold={BILATERAL_CONTACT_DISTANCE_M:.4f}m",
+                        flush=True,
+                    )
+                    bilateral_wait_reported = True
                 for side, (pad, _) in bilateral_pads.items():
                     UsdPhysics.CollisionAPI(pad).CreateCollisionEnabledAttr(True).Set(False)
                     if both_near:
@@ -920,10 +997,10 @@ def main() -> int:
                 banana_gripper_offset = banana_position - gripper_position
                 UsdPhysics.CollisionAPI(banana_proxy).CreateCollisionEnabledAttr(True).Set(False)
                 UsdPhysics.RigidBodyAPI(banana_proxy).CreateKinematicEnabledAttr(False).Set(True)
-                gripper_ramp.target = current_gripper_position
-                gripper_ramp.commanded = current_gripper_position
+                # Keep the commanded slow close running.  Snapping its target
+                # to the measured position here creates a velocity step.
                 banana_attached = True
-                print("[bridge] bilateral finger contact; banana attached and gripper held", flush=True)
+                print("[bridge] bilateral finger contact; banana attached", flush=True)
             gripper_state_publisher.publish(Float64(data=current_gripper_position))
             state = JointState()
             state.header.stamp.sec = int(world.current_time)

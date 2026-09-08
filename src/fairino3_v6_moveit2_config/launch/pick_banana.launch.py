@@ -91,7 +91,7 @@ def generate_launch_description():
     lift_acc_scale_arg = DeclareLaunchArgument("lift_acc_scale", default_value="0.05")
 
     goal_pos_tolerance_arg = DeclareLaunchArgument("goal_pos_tolerance", default_value="0.01")
-    goal_ori_tolerance_arg = DeclareLaunchArgument("goal_ori_tolerance", default_value="0.2")
+    goal_ori_tolerance_arg = DeclareLaunchArgument("goal_ori_tolerance", default_value="0.05")
 
     gripper_action_name_arg = DeclareLaunchArgument(
         "gripper_action_name", default_value="/robotiq_gripper_controller/gripper_cmd"
@@ -110,7 +110,7 @@ def generate_launch_description():
     target_pos_epsilon_arg = DeclareLaunchArgument("target_pos_epsilon", default_value="0.01")
     retry_interval_sec_arg = DeclareLaunchArgument("retry_interval_sec", default_value="1.0")
 
-    gripper_slow_close_arg = DeclareLaunchArgument("gripper_slow_close", default_value="true")
+    gripper_slow_close_arg = DeclareLaunchArgument("gripper_slow_close", default_value="false")
     gripper_close_steps_arg = DeclareLaunchArgument("gripper_close_steps", default_value="12")
     gripper_close_step_delay_ms_arg = DeclareLaunchArgument("gripper_close_step_delay_ms", default_value="350")
     gripper_wait_result_arg = DeclareLaunchArgument("gripper_wait_result", default_value="true")
