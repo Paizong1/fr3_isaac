@@ -33,16 +33,27 @@ def generate_launch_description():
     refine_at_pregrasp_enable_arg = DeclareLaunchArgument("refine_at_pregrasp_enable", default_value="true")
     refine_at_pregrasp_cartesian_arg = DeclareLaunchArgument("refine_at_pregrasp_cartesian", default_value="true")
     refine_at_pregrasp_min_xy_arg = DeclareLaunchArgument("refine_at_pregrasp_min_xy", default_value="0.004")
+    closed_loop_max_iterations_arg = DeclareLaunchArgument("closed_loop_max_iterations", default_value="5")
+    closed_loop_xyz_tolerance_arg = DeclareLaunchArgument("closed_loop_xyz_tolerance", default_value="0.007")
+    closed_loop_orientation_tolerance_arg = DeclareLaunchArgument(
+        "closed_loop_orientation_tolerance", default_value="0.05"
+    )
+    closed_loop_max_translation_step_arg = DeclareLaunchArgument(
+        "closed_loop_max_translation_step", default_value="0.01"
+    )
+    closed_loop_max_orientation_step_arg = DeclareLaunchArgument(
+        "closed_loop_max_orientation_step", default_value="0.05"
+    )
 
-    add_table_collision_arg = DeclareLaunchArgument("add_table_collision", default_value="true")
+    add_table_collision_arg = DeclareLaunchArgument("add_table_collision", default_value="false")
     avoid_collisions_arg = DeclareLaunchArgument("avoid_collisions", default_value="false")
 
     target_x_offset_arg = DeclareLaunchArgument("target_x_offset", default_value="0.0")
     target_y_offset_arg = DeclareLaunchArgument("target_y_offset", default_value="0.0")
-    target_z_offset_arg = DeclareLaunchArgument("target_z_offset", default_value="-0.03")
+    target_z_offset_arg = DeclareLaunchArgument("target_z_offset", default_value="0.02")
     target_z_override_arg = DeclareLaunchArgument("target_z_override", default_value="nan")
 
-    pregrasp_z_offset_arg = DeclareLaunchArgument("pregrasp_z_offset", default_value="0.12")
+    pregrasp_z_offset_arg = DeclareLaunchArgument("pregrasp_z_offset", default_value="0.08")
     grasp_z_offset_arg = DeclareLaunchArgument("grasp_z_offset", default_value="0.010")
     finger_tip_z_offset_arg = DeclareLaunchArgument("finger_tip_z_offset", default_value="0.010")
     lift_z_offset_arg = DeclareLaunchArgument("lift_z_offset", default_value="0.18")
@@ -53,14 +64,14 @@ def generate_launch_description():
     min_fraction_arg = DeclareLaunchArgument("min_fraction", default_value="0.5")
 
     min_grasp_height_above_target_arg = DeclareLaunchArgument("min_grasp_height_above_target", default_value="0.0")
-    auto_final_descend_enable_arg = DeclareLaunchArgument("auto_final_descend_enable", default_value="true")
+    auto_final_descend_enable_arg = DeclareLaunchArgument("auto_final_descend_enable", default_value="false")
     auto_final_descend_margin_arg = DeclareLaunchArgument("auto_final_descend_margin", default_value="0.001")
     auto_final_descend_max_arg = DeclareLaunchArgument("auto_final_descend_max", default_value="0.025")
     force_extra_descend_arg = DeclareLaunchArgument("force_extra_descend", default_value="0.0")
     min_eef_z_arg = DeclareLaunchArgument("min_eef_z", default_value="-0.08")
-    descend_below_target_arg = DeclareLaunchArgument("descend_below_target", default_value="0.005")
+    descend_below_target_arg = DeclareLaunchArgument("descend_below_target", default_value="0.0")
     descend_avoid_collisions_arg = DeclareLaunchArgument("descend_avoid_collisions", default_value="false")
-    reach_grasp_tolerance_arg = DeclareLaunchArgument("reach_grasp_tolerance", default_value="0.003")
+    reach_grasp_tolerance_arg = DeclareLaunchArgument("reach_grasp_tolerance", default_value="0.05")
     single_descend_enable_arg = DeclareLaunchArgument("single_descend_enable", default_value="false")
     single_descend_close_gripper_arg = DeclareLaunchArgument(
         "single_descend_close_gripper", default_value="false"
@@ -90,9 +101,9 @@ def generate_launch_description():
     gripper_max_effort_arg = DeclareLaunchArgument("gripper_max_effort", default_value="100.0")
     gripper_action_timeout_ms_arg = DeclareLaunchArgument("gripper_action_timeout_ms", default_value="15000")
 
-    pregrasp_orientation_mode_arg = DeclareLaunchArgument("pregrasp_orientation_mode", default_value="fixed_rpy")
+    pregrasp_orientation_mode_arg = DeclareLaunchArgument("pregrasp_orientation_mode", default_value="target_yaw")
     pregrasp_fixed_rpy_arg = DeclareLaunchArgument("pregrasp_fixed_rpy", default_value="[3.14159, 0.0, 0.0]")
-    pregrasp_yaw_offset_arg = DeclareLaunchArgument("pregrasp_yaw_offset", default_value="0.0")
+    pregrasp_yaw_offset_arg = DeclareLaunchArgument("pregrasp_yaw_offset", default_value="1.57079632679")
 
     current_state_timeout_arg = DeclareLaunchArgument("current_state_timeout", default_value="5.0")
     min_target_age_sec_arg = DeclareLaunchArgument("min_target_age_sec", default_value="0.2")
@@ -105,10 +116,11 @@ def generate_launch_description():
     gripper_wait_result_arg = DeclareLaunchArgument("gripper_wait_result", default_value="true")
     gripper_timeout_is_success_arg = DeclareLaunchArgument("gripper_timeout_is_success", default_value="true")
     pre_gripper_close_pause_ms_arg = DeclareLaunchArgument("pre_gripper_close_pause_ms", default_value="800")
-    post_gripper_close_settle_ms_arg = DeclareLaunchArgument("post_gripper_close_settle_ms", default_value="3000")
-    staged_lift_enable_arg = DeclareLaunchArgument("staged_lift_enable", default_value="true")
+    post_gripper_close_settle_ms_arg = DeclareLaunchArgument("post_gripper_close_settle_ms", default_value="0")
+    lift_after_close_enable_arg = DeclareLaunchArgument("lift_after_close_enable", default_value="false")
+    staged_lift_enable_arg = DeclareLaunchArgument("staged_lift_enable", default_value="false")
     staged_lift_first_step_arg = DeclareLaunchArgument("staged_lift_first_step", default_value="0.02")
-    staged_lift_pause_ms_arg = DeclareLaunchArgument("staged_lift_pause_ms", default_value="800")
+    staged_lift_pause_ms_arg = DeclareLaunchArgument("staged_lift_pause_ms", default_value="0")
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     start_move_group = LaunchConfiguration("start_move_group")
@@ -182,6 +194,17 @@ def generate_launch_description():
                 "refine_at_pregrasp_enable": LaunchConfiguration("refine_at_pregrasp_enable"),
                 "refine_at_pregrasp_cartesian": LaunchConfiguration("refine_at_pregrasp_cartesian"),
                 "refine_at_pregrasp_min_xy": LaunchConfiguration("refine_at_pregrasp_min_xy"),
+                "closed_loop_max_iterations": LaunchConfiguration("closed_loop_max_iterations"),
+                "closed_loop_xyz_tolerance": LaunchConfiguration("closed_loop_xyz_tolerance"),
+                "closed_loop_orientation_tolerance": LaunchConfiguration(
+                    "closed_loop_orientation_tolerance"
+                ),
+                "closed_loop_max_translation_step": LaunchConfiguration(
+                    "closed_loop_max_translation_step"
+                ),
+                "closed_loop_max_orientation_step": LaunchConfiguration(
+                    "closed_loop_max_orientation_step"
+                ),
                 "add_table_collision": LaunchConfiguration("add_table_collision"),
                 "avoid_collisions": LaunchConfiguration("avoid_collisions"),
                 "descend_avoid_collisions": LaunchConfiguration("descend_avoid_collisions"),
@@ -239,6 +262,7 @@ def generate_launch_description():
                 "gripper_timeout_is_success": LaunchConfiguration("gripper_timeout_is_success"),
                 "pre_gripper_close_pause_ms": LaunchConfiguration("pre_gripper_close_pause_ms"),
                 "post_gripper_close_settle_ms": LaunchConfiguration("post_gripper_close_settle_ms"),
+                "lift_after_close_enable": LaunchConfiguration("lift_after_close_enable"),
                 "staged_lift_enable": LaunchConfiguration("staged_lift_enable"),
                 "staged_lift_first_step": LaunchConfiguration("staged_lift_first_step"),
                 "staged_lift_pause_ms": LaunchConfiguration("staged_lift_pause_ms"),
@@ -264,6 +288,11 @@ def generate_launch_description():
             refine_at_pregrasp_enable_arg,
             refine_at_pregrasp_cartesian_arg,
             refine_at_pregrasp_min_xy_arg,
+            closed_loop_max_iterations_arg,
+            closed_loop_xyz_tolerance_arg,
+            closed_loop_orientation_tolerance_arg,
+            closed_loop_max_translation_step_arg,
+            closed_loop_max_orientation_step_arg,
             add_table_collision_arg,
             avoid_collisions_arg,
             descend_avoid_collisions_arg,
@@ -319,6 +348,7 @@ def generate_launch_description():
             gripper_timeout_is_success_arg,
             pre_gripper_close_pause_ms_arg,
             post_gripper_close_settle_ms_arg,
+            lift_after_close_enable_arg,
             staged_lift_enable_arg,
             staged_lift_first_step_arg,
             staged_lift_pause_ms_arg,

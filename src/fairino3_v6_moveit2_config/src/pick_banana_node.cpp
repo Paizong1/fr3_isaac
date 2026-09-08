@@ -445,18 +445,19 @@ int main(int argc, char ** argv)
   const std::string gripper_joint_name =
     declare_or_get_parameter<std::string>(node, "gripper_joint_name", "robotiq_85_left_knuckle_joint");
   const int gripper_action_timeout_ms = declare_or_get_parameter<int>(node, "gripper_action_timeout_ms", 15000);
-  const bool gripper_slow_close = declare_or_get_parameter<bool>(node, "gripper_slow_close", true);
+  const bool gripper_slow_close = declare_or_get_parameter<bool>(node, "gripper_slow_close", false);
   const int gripper_close_steps = declare_or_get_parameter<int>(node, "gripper_close_steps", 12);
   const int gripper_close_step_delay_ms = declare_or_get_parameter<int>(node, "gripper_close_step_delay_ms", 350);
   const bool gripper_wait_result = declare_or_get_parameter<bool>(node, "gripper_wait_result", true);
-  const bool gripper_timeout_is_success = declare_or_get_parameter<bool>(node, "gripper_timeout_is_success", true);
+  const bool gripper_timeout_is_success = declare_or_get_parameter<bool>(node, "gripper_timeout_is_success", false);
   const int pre_gripper_close_pause_ms = declare_or_get_parameter<int>(node, "pre_gripper_close_pause_ms", 800);
   const int post_gripper_close_settle_ms = declare_or_get_parameter<int>(node, "post_gripper_close_settle_ms", 3000);
+  const bool lift_after_close_enable = declare_or_get_parameter<bool>(node, "lift_after_close_enable", false);
   const bool staged_lift_enable = declare_or_get_parameter<bool>(node, "staged_lift_enable", true);
   const double staged_lift_first_step = declare_or_get_parameter<double>(node, "staged_lift_first_step", 0.02);
   const int staged_lift_pause_ms = declare_or_get_parameter<int>(node, "staged_lift_pause_ms", 800);
 
-  const double pregrasp_z_offset = declare_or_get_parameter<double>(node, "pregrasp_z_offset", 0.12);
+  const double pregrasp_z_offset = declare_or_get_parameter<double>(node, "pregrasp_z_offset", 0.08);
   const double grasp_z_offset = declare_or_get_parameter<double>(node, "grasp_z_offset", 0.010);
   const double finger_tip_z_offset = declare_or_get_parameter<double>(node, "finger_tip_z_offset", 0.010);
   const double lift_z_offset = declare_or_get_parameter<double>(node, "lift_z_offset", 0.18);
@@ -465,7 +466,7 @@ int main(int argc, char ** argv)
   const bool avoid_collisions = declare_or_get_parameter<bool>(node, "avoid_collisions", false);
   const bool descend_avoid_collisions =
     declare_or_get_parameter<bool>(node, "descend_avoid_collisions", false);
-  const double reach_grasp_tolerance = declare_or_get_parameter<double>(node, "reach_grasp_tolerance", 0.003);
+  const double reach_grasp_tolerance = declare_or_get_parameter<double>(node, "reach_grasp_tolerance", 0.05);
   const double vel_scale = declare_or_get_parameter<double>(node, "vel_scale", 0.3);
   const double acc_scale = declare_or_get_parameter<double>(node, "acc_scale", 0.3);
   const double lift_vel_scale = declare_or_get_parameter<double>(node, "lift_vel_scale", 0.05);
@@ -505,7 +506,7 @@ int main(int argc, char ** argv)
   const int pregrasp_fallback_planning_attempts =
     declare_or_get_parameter<int>(node, "pregrasp_fallback_planning_attempts", 10);
   const bool pregrasp_orientation_enforce =
-    declare_or_get_parameter<bool>(node, "pregrasp_orientation_enforce", true);
+    declare_or_get_parameter<bool>(node, "pregrasp_orientation_enforce", false);
   const double pregrasp_orientation_enforce_min_angle =
     declare_or_get_parameter<double>(node, "pregrasp_orientation_enforce_min_angle", 0.08);
   const double pregrasp_orientation_enforce_planning_time =
@@ -520,11 +521,21 @@ int main(int argc, char ** argv)
   const bool refine_at_pregrasp_enable = declare_or_get_parameter<bool>(node, "refine_at_pregrasp_enable", true);
   const bool refine_at_pregrasp_cartesian = declare_or_get_parameter<bool>(node, "refine_at_pregrasp_cartesian", true);
   const double refine_at_pregrasp_min_xy = declare_or_get_parameter<double>(node, "refine_at_pregrasp_min_xy", 0.004);
+  const int closed_loop_max_iterations =
+    declare_or_get_parameter<int>(node, "closed_loop_max_iterations", 5);
+  const double closed_loop_xyz_tolerance =
+    declare_or_get_parameter<double>(node, "closed_loop_xyz_tolerance", 0.007);
+  const double closed_loop_orientation_tolerance =
+    declare_or_get_parameter<double>(node, "closed_loop_orientation_tolerance", 0.05);
+  const double closed_loop_max_translation_step =
+    declare_or_get_parameter<double>(node, "closed_loop_max_translation_step", 0.01);
+  const double closed_loop_max_orientation_step =
+    declare_or_get_parameter<double>(node, "closed_loop_max_orientation_step", 0.05);
   const double target_z_override = declare_or_get_parameter<double>(
     node, "target_z_override", std::numeric_limits<double>::quiet_NaN());
   const double target_x_offset = declare_or_get_parameter<double>(node, "target_x_offset", 0.0);
   const double target_y_offset = declare_or_get_parameter<double>(node, "target_y_offset", 0.0);
-  const double target_z_offset = declare_or_get_parameter<double>(node, "target_z_offset", -0.03);
+  const double target_z_offset = declare_or_get_parameter<double>(node, "target_z_offset", 0.0);
   const double min_grasp_height_above_target =
     declare_or_get_parameter<double>(node, "min_grasp_height_above_target", 0.0);
   const bool elbow_constraint_enable = declare_or_get_parameter<bool>(node, "elbow_constraint_enable", false);
@@ -553,12 +564,12 @@ int main(int argc, char ** argv)
     declare_or_get_parameter<std::vector<double>>(node, "table_size", std::vector<double>{5.0, 5.0, 0.4});
   const std::vector<double> table_center =
     declare_or_get_parameter<std::vector<double>>(node, "table_center", std::vector<double>{0.0, 0.0, -0.2});
-  const bool auto_final_descend_enable = declare_or_get_parameter<bool>(node, "auto_final_descend_enable", true);
+  const bool auto_final_descend_enable = declare_or_get_parameter<bool>(node, "auto_final_descend_enable", false);
   const double auto_final_descend_margin = declare_or_get_parameter<double>(node, "auto_final_descend_margin", 0.001);
   const double auto_final_descend_max = declare_or_get_parameter<double>(node, "auto_final_descend_max", 0.025);
   const double force_extra_descend = declare_or_get_parameter<double>(node, "force_extra_descend", 0.0);
   const double min_eef_z = declare_or_get_parameter<double>(node, "min_eef_z", -0.08);
-  const double descend_below_target = declare_or_get_parameter<double>(node, "descend_below_target", 0.005);
+  const double descend_below_target = declare_or_get_parameter<double>(node, "descend_below_target", 0.0);
   const bool single_descend_enable = declare_or_get_parameter<bool>(node, "single_descend_enable", false);
   const bool single_descend_close_gripper =
     declare_or_get_parameter<bool>(node, "single_descend_close_gripper", false);
@@ -649,7 +660,7 @@ int main(int argc, char ** argv)
 
   auto js_qos = rclcpp::SensorDataQoS();
   rclcpp::SubscriptionOptions js_sub_opt;
-  js_sub_opt.callback_group = main_cb_group;
+  js_sub_opt.callback_group = action_cb_group;
   auto joint_sub = node->create_subscription<sensor_msgs::msg::JointState>(
     joint_states_topic, js_qos, [&](const sensor_msgs::msg::JointState::SharedPtr msg) {
       std::scoped_lock<std::mutex> lock(joint_mutex);
@@ -708,6 +719,102 @@ int main(int argc, char ** argv)
       }
       latest_target = *msg;
     }, target_sub_opt);
+
+  // FK is deliberately rebuilt from the received joint state instead of the
+  // MoveIt monitor so the correction starts from Isaac's measured position.
+  auto actual_tcp_from_joint_states = [&]() -> std::optional<geometry_msgs::msg::Pose> {
+      sensor_msgs::msg::JointState js_copy;
+      {
+        std::scoped_lock<std::mutex> lock(joint_mutex);
+        if (!have_joint_state) {
+          return std::nullopt;
+        }
+        js_copy = latest_joint_state;
+      }
+      moveit::core::RobotState state(robot_model);
+      for (size_t i = 0; i < js_copy.name.size() && i < js_copy.position.size(); ++i) {
+        const auto * joint = robot_model->getJointModel(js_copy.name[i]);
+        if (joint && joint->getVariableCount() == 1) {
+          const double position = static_cast<double>(js_copy.position[i]);
+          state.setJointPositions(joint, &position);
+        }
+      }
+      state.update();
+      return tf2::toMsg(state.getGlobalLinkTransform(eef_link));
+    };
+
+  auto closed_loop_correct = [&](const geometry_msgs::msg::Pose & desired_pose,
+                                 const geometry_msgs::msg::PoseStamped & object_pose,
+                                 const char * stage) {
+      const int max_iterations = std::max(1, std::min(5, closed_loop_max_iterations));
+      const double xyz_tolerance = std::max(0.0, closed_loop_xyz_tolerance);
+      const double max_translation = std::max(1e-4, closed_loop_max_translation_step);
+
+      for (int iteration = 1; iteration <= max_iterations; ++iteration) {
+        const auto actual_pose = actual_tcp_from_joint_states();
+        if (!actual_pose) {
+          RCLCPP_ERROR(node->get_logger(), "%s closed-loop: no /joint_states", stage);
+          return false;
+        }
+
+        tf2::Transform actual_tf;
+        tf2::Transform desired_tf;
+        tf2::Transform object_tf;
+        tf2::fromMsg(*actual_pose, actual_tf);
+        tf2::fromMsg(desired_pose, desired_tf);
+        tf2::fromMsg(object_pose.pose, object_tf);
+        const auto target_in_tcp = actual_tf.inverse() * object_tf.getOrigin();
+        const auto error_in_tcp = actual_tf.inverse() * desired_tf.getOrigin();
+        tf2::Quaternion q_error = actual_tf.getRotation().inverse() * desired_tf.getRotation();
+        q_error.normalize();
+        const double orientation_error = 2.0 * std::acos(
+          std::min(1.0, std::max(0.0, std::fabs(q_error.w()))));
+
+        RCLCPP_INFO(
+          node->get_logger(),
+          "%s closed-loop %d/%d: actual_tcp=(%.4f %.4f %.4f) target_in_tcp_xyz=(%.4f %.4f %.4f) "
+          "command_error_tcp_xyz=(%.4f %.4f %.4f) orientation_error=%.4f rad",
+          stage, iteration, max_iterations,
+          static_cast<double>(actual_pose->position.x), static_cast<double>(actual_pose->position.y),
+          static_cast<double>(actual_pose->position.z), target_in_tcp.x(), target_in_tcp.y(), target_in_tcp.z(),
+          error_in_tcp.x(), error_in_tcp.y(), error_in_tcp.z(), orientation_error);
+
+        if (std::fabs(error_in_tcp.x()) <= xyz_tolerance &&
+            std::fabs(error_in_tcp.y()) <= xyz_tolerance &&
+            std::fabs(error_in_tcp.z()) <= xyz_tolerance) {
+          return true;
+        }
+
+        geometry_msgs::msg::Pose step_pose = *actual_pose;
+        const double dx = static_cast<double>(desired_pose.position.x) - static_cast<double>(actual_pose->position.x);
+        const double dy = static_cast<double>(desired_pose.position.y) - static_cast<double>(actual_pose->position.y);
+        const double dz = static_cast<double>(desired_pose.position.z) - static_cast<double>(actual_pose->position.z);
+        const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const double scale = iteration == 1 ? 1.0 :
+          (distance > max_translation ? max_translation / distance : 1.0);
+        step_pose.position.x += dx * scale;
+        step_pose.position.y += dy * scale;
+        step_pose.position.z += dz * scale;
+        // Detection refines object position, not tool attitude.  Keeping the
+        // planned attitude avoids repeated in-place joint corrections.
+
+        arm.setStartStateToCurrentState();
+        moveit_msgs::msg::RobotTrajectory trajectory;
+        const double fraction = arm.computeCartesianPath(
+          {*actual_pose, step_pose}, eef_step, 0.0, trajectory, avoid_collisions);
+        if (fraction < min_fraction) {
+          RCLCPP_ERROR(node->get_logger(), "%s closed-loop: Cartesian fraction %.3f too low", stage, fraction);
+          return false;
+        }
+        const auto current_state_ptr = arm.getCurrentState(current_state_timeout);
+        if (!current_state_ptr || !execute_trajectory(
+              node, arm, robot_model, arm_group, *current_state_ptr, trajectory, vel_scale, acc_scale)) {
+          return false;
+        }
+      }
+      RCLCPP_ERROR(node->get_logger(), "%s closed-loop: not centered after %d iterations", stage, max_iterations);
+      return false;
+    };
 
   auto tick = [&]() {
     if (done.load()) {
@@ -952,6 +1059,20 @@ int main(int argc, char ** argv)
           const double p = pregrasp_fixed_rpy.size() > 1 ? pregrasp_fixed_rpy[1] : 0.0;
           const double y = pregrasp_fixed_rpy.size() > 2 ? pregrasp_fixed_rpy[2] : 0.0;
           set_from_rpy(r, p, y + pregrasp_yaw_offset);
+        } else if (pregrasp_orientation_mode == "target_yaw") {
+          tf2::Quaternion q_target;
+          tf2::fromMsg(target_in_planning.pose.orientation, q_target);
+          if (q_target.length2() > 1e-12) {
+            q_target.normalize();
+          } else {
+            q_target.setValue(0.0, 0.0, 0.0, 1.0);
+          }
+          double r_target = 0.0, p_target = 0.0, y_target = 0.0;
+          tf2::Matrix3x3(q_target).getRPY(r_target, p_target, y_target);
+          const double r = pregrasp_fixed_rpy.size() > 0 ? pregrasp_fixed_rpy[0] : 0.0;
+          const double p = pregrasp_fixed_rpy.size() > 1 ? pregrasp_fixed_rpy[1] : 0.0;
+          const double y = pregrasp_fixed_rpy.size() > 2 ? pregrasp_fixed_rpy[2] : 0.0;
+          set_from_rpy(r, p, y + y_target + pregrasp_yaw_offset);
         } else {
           set_from_current();
         }
@@ -1171,18 +1292,31 @@ int main(int argc, char ** argv)
         executing.store(false);
         return;
       }
-      if (!execute_plan(node, arm, to_pregrasp_plan)) {
-        finish_fail("pregrasp_execute_failed");
+      const auto & pregrasp_joint_trajectory = to_pregrasp_plan.trajectory_.joint_trajectory;
+      if (pregrasp_joint_trajectory.joint_names.empty() || pregrasp_joint_trajectory.points.empty()) {
+        finish_fail("pregrasp_trajectory_empty");
         return;
       }
-
-      arm.setStartStateToCurrentState();
-      const auto pose_after_pre = arm.getCurrentPose(eef_link).pose;
-      geometry_msgs::msg::Pose pregrasp_pose = pose_after_pre;
+      moveit::core::RobotState pregrasp_state = start_state;
+      const auto & pregrasp_endpoint = pregrasp_joint_trajectory.points.back().positions;
+      if (pregrasp_endpoint.size() != pregrasp_joint_trajectory.joint_names.size()) {
+        finish_fail("pregrasp_trajectory_invalid");
+        return;
+      }
+      for (size_t i = 0; i < pregrasp_endpoint.size(); ++i) {
+        const auto * joint = robot_model->getJointModel(pregrasp_joint_trajectory.joint_names[i]);
+        if (joint && joint->getVariableCount() == 1) {
+          const double position = pregrasp_endpoint[i];
+          pregrasp_state.setJointPositions(joint, &position);
+        }
+      }
+      pregrasp_state.update();
+      geometry_msgs::msg::Pose pregrasp_pose =
+        tf2::toMsg(pregrasp_state.getGlobalLinkTransform(eef_link));
 
       if (pregrasp_orientation_enforce && !single_descend_enable && !inspect_after_pregrasp && !inspect_after_grasp) {
         tf2::Quaternion q_cur;
-        tf2::fromMsg(pose_after_pre.orientation, q_cur);
+        tf2::fromMsg(pregrasp_pose.orientation, q_cur);
         if (q_cur.length2() > 1e-12) {
           q_cur.normalize();
         } else {
@@ -1215,7 +1349,7 @@ int main(int argc, char ** argv)
           geometry_msgs::msg::PoseStamped enforce_pose;
           enforce_pose.header.frame_id = planning_frame;
           enforce_pose.header.stamp = node->now();
-          enforce_pose.pose = pose_after_pre;
+          enforce_pose.pose = pregrasp_pose;
           enforce_pose.pose.orientation = pregrasp_target.pose.orientation;
           arm.setPoseTarget(enforce_pose, eef_link);
           arm.setPlanningTime(std::max(0.1, pregrasp_orientation_enforce_planning_time));
@@ -1241,56 +1375,9 @@ int main(int argc, char ** argv)
         }
       }
 
-      if (!single_descend_enable && refine_at_pregrasp_enable) {
-        geometry_msgs::msg::PoseStamped target_refine_copy;
-        {
-          std::scoped_lock<std::mutex> lock(target_mutex);
-          target_refine_copy = latest_target;
-        }
-        const auto target_refine_in_planning = transform_pose(node, tf_buffer, target_refine_copy, planning_frame);
-        const double rx = static_cast<double>(target_refine_in_planning.pose.position.x) + target_x_offset;
-        const double ry = static_cast<double>(target_refine_in_planning.pose.position.y) + target_y_offset;
-        const double dx = rx - static_cast<double>(pregrasp_pose.position.x);
-        const double dy = ry - static_cast<double>(pregrasp_pose.position.y);
-        const double dxy = std::sqrt(dx * dx + dy * dy);
-        if (dxy >= std::max(0.0, refine_at_pregrasp_min_xy)) {
-          geometry_msgs::msg::Pose refine_pose = pregrasp_pose;
-          refine_pose.position.x = rx;
-          refine_pose.position.y = ry;
-          refine_pose.orientation = pregrasp_target.pose.orientation;
-
-          bool refined_ok = false;
-          if (refine_at_pregrasp_cartesian) {
-            std::vector<geometry_msgs::msg::Pose> waypoints;
-            waypoints.push_back(pregrasp_pose);
-            waypoints.push_back(refine_pose);
-            moveit_msgs::msg::RobotTrajectory refine_traj;
-            arm.setStartStateToCurrentState();
-            const double frac = arm.computeCartesianPath(waypoints, eef_step, 0.0, refine_traj, avoid_collisions);
-            if (frac >= std::max(0.0, std::min(1.0, min_fraction))) {
-              auto current_state_ptr = arm.getCurrentState(current_state_timeout);
-              if (current_state_ptr) {
-                refined_ok = execute_trajectory(
-                  node, arm, robot_model, arm_group, *current_state_ptr, refine_traj, vel_scale, acc_scale);
-              }
-            }
-          }
-
-          if (!refined_ok) {
-            arm.setStartStateToCurrentState();
-            arm.clearPoseTargets();
-            arm.setPoseTarget(refine_pose, eef_link);
-            moveit::planning_interface::MoveGroupInterface::Plan refine_plan;
-            if (arm.plan(refine_plan) == moveit::core::MoveItErrorCode::SUCCESS) {
-              refined_ok = execute_plan(node, arm, refine_plan);
-            }
-          }
-
-          if (refined_ok) {
-            arm.setStartStateToCurrentState();
-            pregrasp_pose = arm.getCurrentPose(eef_link).pose;
-          }
-        }
+      bool blend_pregrasp_correction_into_descent = false;
+      if (!single_descend_enable) {
+        blend_pregrasp_correction_into_descent = true;
       }
 
       auto inspect_geometry = [&](const geometry_msgs::msg::Pose & tcp_pose, const char * stage,
@@ -1380,30 +1467,13 @@ int main(int argc, char ** argv)
         }
         arm.setStartStateToCurrentState();
         if (single_descend_close_gripper) {
-          if (!use_direct_gripper_action) {
-            finish_fail("single_descend_gripper_action_disabled");
-            return;
-          }
-          const auto per_goal_timeout = std::chrono::milliseconds(
-            std::max(1000, gripper_action_timeout_ms));
-          if (!send_gripper_action_slow_close(
-                node, gripper_client, gripper_open_pos, gripper_close_pos, gripper_max_effort,
-                gripper_close_steps, per_goal_timeout,
-                std::chrono::milliseconds(std::max(0, gripper_close_step_delay_ms)),
-                gripper_wait_result, gripper_timeout_is_success)) {
-            finish_fail("single_descend_gripper_close_failed");
-            return;
-          }
-          publish_grasp_state("grasped", "single_descend_gripper_closed");
-          if (post_gripper_close_settle_ms > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(post_gripper_close_settle_ms));
-          }
-          inspect_geometry(
-            arm.getCurrentPose(eef_link).pose, "single_descend_close",
-            "single_descend_gripper_contact_ready");
-        } else {
-          inspect_geometry(arm.getCurrentPose(eef_link).pose, "single_descend", "single_descend_geometry_ready");
+          RCLCPP_ERROR(
+            node->get_logger(),
+            "Single-descend close is disabled: closing requires the full closed-loop centering check");
+          finish_fail("single_descend_close_requires_closed_loop");
+          return;
         }
+        inspect_geometry(arm.getCurrentPose(eef_link).pose, "single_descend", "single_descend_geometry_ready");
         if (execute_once) {
           done.store(true);
         }
@@ -1412,6 +1482,10 @@ int main(int argc, char ** argv)
       }
 
       geometry_msgs::msg::Pose grasp_pose = pregrasp_pose;
+      if (blend_pregrasp_correction_into_descent) {
+        grasp_pose.position.x = pregrasp_target.pose.position.x;
+        grasp_pose.position.y = pregrasp_target.pose.position.y;
+      }
       const double desired_grasp_z_uncapped =
         tz_obj + grasp_z_offset - finger_tip_z_offset - std::max(0.0, descend_below_target);
       double grasp_z_clamped = std::max(desired_grasp_z_uncapped, min_eef_z);
@@ -1449,9 +1523,9 @@ int main(int argc, char ** argv)
       down_waypoints.push_back(grasp_pose);
 
       moveit_msgs::msg::RobotTrajectory down_traj;
-      arm.setStartStateToCurrentState();
+      arm.setStartState(pregrasp_state);
       const double down_fraction = arm.computeCartesianPath(
-        down_waypoints, eef_step, 0.0, down_traj, descend_avoid_collisions);
+        {grasp_pose}, eef_step, 0.0, down_traj, descend_avoid_collisions);
       if (down_fraction < 1.0 - 1e-3) {
         RCLCPP_WARN(
           node->get_logger(),
@@ -1459,29 +1533,23 @@ int main(int argc, char ** argv)
           down_fraction);
       }
       if (down_fraction < min_fraction) {
-        RCLCPP_ERROR(node->get_logger(), "Down Cartesian fraction too low: %.2f", down_fraction);
-        arm.setStartStateToCurrentState();
-        arm.clearPoseTargets();
-        geometry_msgs::msg::Pose grasp_pose_for_pose_plan = grasp_pose;
-        grasp_pose_for_pose_plan.orientation = pregrasp_target.pose.orientation;
-        arm.setPoseTarget(grasp_pose_for_pose_plan);
-        moveit::planning_interface::MoveGroupInterface::Plan to_grasp_plan;
-        const auto grasp_ret = arm.plan(to_grasp_plan);
-        if (grasp_ret != moveit::core::MoveItErrorCode::SUCCESS) {
-          finish_fail();
-          return;
-        }
-        if (!execute_plan(node, arm, to_grasp_plan)) {
-          finish_fail();
-          return;
-        }
+        RCLCPP_ERROR(node->get_logger(), "Down Cartesian fraction too low for merged trajectory: %.2f", down_fraction);
+        finish_fail("merged_down_cartesian_incomplete");
+        return;
       } else {
-        auto current_state_ptr = arm.getCurrentState(current_state_timeout);
-        if (!current_state_ptr) {
-          finish_fail();
+        moveit_msgs::msg::RobotTrajectory merged_traj = to_pregrasp_plan.trajectory_;
+        auto & merged_joint_trajectory = merged_traj.joint_trajectory;
+        const auto & down_joint_trajectory = down_traj.joint_trajectory;
+        if (merged_joint_trajectory.joint_names != down_joint_trajectory.joint_names) {
+          finish_fail("merged_trajectory_joint_mismatch");
           return;
         }
-        if (!execute_trajectory(node, arm, robot_model, arm_group, *current_state_ptr, down_traj, vel_scale, acc_scale)) {
+        for (size_t i = 1; i < down_joint_trajectory.points.size(); ++i) {
+          merged_joint_trajectory.points.push_back(down_joint_trajectory.points[i]);
+        }
+        RCLCPP_INFO(node->get_logger(), "Executing merged pregrasp-to-grasp trajectory");
+        if (!execute_trajectory(
+              node, arm, robot_model, arm_group, start_state, merged_traj, vel_scale, acc_scale)) {
           finish_fail();
           return;
         }
@@ -1510,7 +1578,8 @@ int main(int argc, char ** argv)
               acc_scale,
               current_state_timeout,
               "Reach grasp height")) {
-          RCLCPP_WARN(node->get_logger(), "Reach grasp height failed, continuing with current pose");
+          finish_fail("reach_grasp_height_failed");
+          return;
         }
       } else {
         RCLCPP_INFO(
@@ -1548,7 +1617,8 @@ int main(int argc, char ** argv)
                 acc_scale,
                 current_state_timeout,
                 "Auto final descend")) {
-            RCLCPP_WARN(node->get_logger(), "Auto final descend failed, continuing");
+            finish_fail("auto_final_descend_failed");
+            return;
           }
         }
       }
@@ -1576,7 +1646,8 @@ int main(int argc, char ** argv)
                 acc_scale,
                 current_state_timeout,
                 "Force extra descend")) {
-            RCLCPP_WARN(node->get_logger(), "Force extra descend failed, continuing");
+            finish_fail("force_extra_descend_failed");
+            return;
           }
         }
       }
@@ -1606,7 +1677,8 @@ int main(int argc, char ** argv)
                 acc_scale,
                 current_state_timeout,
                 "Ensure grasp reach")) {
-            RCLCPP_WARN(node->get_logger(), "Ensure grasp reach failed, continuing");
+            finish_fail("ensure_grasp_reach_failed");
+            return;
           }
         } else if (gap < -0.02) {
           RCLCPP_WARN(
@@ -1615,6 +1687,8 @@ int main(int argc, char ** argv)
             static_cast<double>(pose_before_grasp.position.z),
             desired_grasp_z_final,
             -gap);
+          finish_fail("grasp_over_descended");
+          return;
         }
       }
 
@@ -1686,6 +1760,18 @@ int main(int argc, char ** argv)
       }
 
       publish_grasp_state("grasped", "gripper_closed");
+      if (!lift_after_close_enable) {
+        RCLCPP_INFO(node->get_logger(), "Gripper closed; holding TCP position (lift disabled)");
+        if (post_gripper_close_settle_ms > 0) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(post_gripper_close_settle_ms));
+        }
+        inspect_geometry(arm.getCurrentPose(eef_link).pose, "close", "gripper_contact_ready");
+        if (execute_once) {
+          done.store(true);
+        }
+        executing.store(false);
+        return;
+      }
 
       arm.setStartStateToCurrentState();
       const auto pose_after_down = arm.getCurrentPose(eef_link).pose;
@@ -1718,7 +1804,7 @@ int main(int argc, char ** argv)
         return;
       }
 
-      bool did_stage1_lift = false;
+      double remaining_lift_delta = lift_delta;
       if (staged_lift_enable && lift_delta > 1e-6) {
         const double step = std::max(0.0, staged_lift_first_step);
         if (step > 1e-6 && step < lift_delta - 1e-6) {
@@ -1745,7 +1831,7 @@ int main(int argc, char ** argv)
               finish_fail();
               return;
             }
-            did_stage1_lift = true;
+            remaining_lift_delta = lift_delta - step;
             if (staged_lift_pause_ms > 0) {
               RCLCPP_INFO(node->get_logger(), "Pause %d ms after staged lift step 1", staged_lift_pause_ms);
               std::this_thread::sleep_for(std::chrono::milliseconds(staged_lift_pause_ms));
@@ -1762,7 +1848,8 @@ int main(int argc, char ** argv)
       arm.setStartStateToCurrentState();
       grasp_pose_actual = arm.getCurrentPose(eef_link).pose;
       lift_pose_actual = grasp_pose_actual;
-      lift_pose_actual.position.z = static_cast<double>(grasp_pose_actual.position.z) + lift_delta;
+      lift_pose_actual.position.z =
+        static_cast<double>(grasp_pose_actual.position.z) + remaining_lift_delta;
 
       std::vector<geometry_msgs::msg::Pose> up_waypoints;
       up_waypoints.push_back(grasp_pose_actual);

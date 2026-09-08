@@ -17,9 +17,14 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 ARM_JOINTS = ("j1", "j2", "j3", "j4", "j5", "j6")
-STATE_MAX_AGE_SEC = 2.0
-FINAL_TOLERANCE_RAD = 0.01
-SETTLE_SIM_TIME_SEC = 2.0
+STATE_MAX_AGE_SEC = 5.0
+# Action completion only: pick_banana_node.cpp subsequently verifies actual
+# TCP position with FK and refuses to close unless it is within 5 mm.
+# This early action threshold only keeps small joint tracking residuals from
+# aborting the subsequent TCP closed-loop correction.
+FINAL_TOLERANCE_RAD = 0.05
+SETTLE_SIM_TIME_SEC = 0.5
+MAX_COMMAND_SPEED_RAD_S = 0.03
 
 
 class TrajectoryActionProxy:
@@ -33,7 +38,7 @@ class TrajectoryActionProxy:
         self._last_complete_state_wall = None
         self._lock = threading.Lock()
         group = ReentrantCallbackGroup()
-        self._publisher = self.node.create_publisher(JointTrajectory, trajectory_topic, 1)
+        self._publisher = self.node.create_publisher(JointTrajectory, trajectory_topic, 100)
         self.node.create_subscription(JointState, state_topic, self._on_state, 10, callback_group=group)
         self._server = ActionServer(
             self.node, FollowJointTrajectory, action_name,
@@ -86,6 +91,22 @@ class TrajectoryActionProxy:
             return GoalResponse.REJECT
         return GoalResponse.ACCEPT
 
+    def _hold_position(self):
+        with self._lock:
+            positions = [self._positions.get(name) for name in ARM_JOINTS]
+        if not all(position is not None and math.isfinite(position) for position in positions):
+            return
+        hold = JointTrajectory()
+        hold.joint_names = list(ARM_JOINTS)
+        for seconds in (0.1, 0.2):
+            point = JointTrajectoryPoint(positions=positions)
+            point.time_from_start.sec, point.time_from_start.nanosec = divmod(
+                round(seconds * 1e9), 1_000_000_000
+            )
+            hold.points.append(point)
+        self._publisher.publish(hold)
+        print("[trajectory] replaced queued trajectory with current-position hold", flush=True)
+
     def _execute(self, goal_handle):
         trajectory = goal_handle.request.trajectory
         arm_current, state_error = self._fresh_arm_state()
@@ -122,7 +143,7 @@ class TrajectoryActionProxy:
         )
         time_offset = max(0.1 - first_time, 0.0)
         base_duration = raw_duration + time_offset
-        duration = max(base_duration, 2.0, max_delta / 0.01)
+        duration = max(base_duration, 1.0, max_delta / MAX_COMMAND_SPEED_RAD_S)
         wall_deadline = time.monotonic() + max(60.0, duration * 5.0 + 20.0)
         scale = duration / base_duration
         for point in wire_trajectory.points:
@@ -134,38 +155,20 @@ class TrajectoryActionProxy:
         previous_time = 0.0
         for point in wire_trajectory.points:
             point_time = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
-            segment_duration = max(0.1, point_time - previous_time)
             segment_time = point.time_from_start.__class__()
-            segment_time.sec, segment_time.nanosec = divmod(round(segment_duration * 1e9), 1_000_000_000)
+            segment_time.sec, segment_time.nanosec = divmod(
+                round(max(0.1, point_time - previous_time) * 1e9), 1_000_000_000
+            )
             segment = JointTrajectory()
             segment.joint_names = list(wire_trajectory.joint_names)
             segment.points = [
-                JointTrajectoryPoint(
-                    positions=list(point.positions),
-                    time_from_start=segment_time,
-                )
+                JointTrajectoryPoint(positions=list(point.positions), time_from_start=segment_time)
             ]
             self._publisher.publish(segment)
-            with self._lock:
-                segment_start_time = self._sim_time
-            while True:
-                with self._lock:
-                    sim_time = self._sim_time
-                if sim_time is not None and segment_start_time is not None and sim_time - segment_start_time >= segment_duration:
-                    break
-                if goal_handle.is_cancel_requested:
-                    goal_handle.canceled()
-                    return self._result(FollowJointTrajectory.Result.SUCCESSFUL, "trajectory canceled")
-                if time.monotonic() >= wall_deadline:
-                    goal_handle.abort()
-                    return self._result(FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED, "Isaac did not advance through trajectory")
-                time.sleep(0.05)
             previous_time = point_time
-        # Isaac can run slower than wall-clock time on the available GPU.
-        # Judge the requested trajectory against the simulation clock instead.
         final_target = ", ".join(f"{name}={target[name]:.4f}" for name in trajectory.joint_names)
         print(
-            f"[trajectory] forwarded full trajectory ({len(trajectory.points)} -> {len(wire_trajectory.points)}), "
+            f"[trajectory] queued continuous trajectory ({len(trajectory.points)} -> {len(wire_trajectory.points)}), "
             f"max_delta={max_delta:.4f} rad, duration={duration:.3f}s sim-time, "
             f"final_target=[{final_target}]",
             flush=True,
@@ -177,6 +180,7 @@ class TrajectoryActionProxy:
             arm_actual, state_error = self._fresh_arm_state()
             if state_error:
                 print(f"[trajectory] aborted while waiting: {state_error}", flush=True)
+                self._hold_position()
                 goal_handle.abort()
                 return self._result(FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED, state_error)
             actual_by_name = dict(zip(ARM_JOINTS, arm_actual))
@@ -207,10 +211,12 @@ class TrajectoryActionProxy:
             if sim_elapsed is not None and sim_elapsed >= duration + 5.0:
                 break
             if goal_handle.is_cancel_requested:
+                self._hold_position()
                 goal_handle.canceled()
                 return self._result(FollowJointTrajectory.Result.SUCCESSFUL, "trajectory canceled")
             time.sleep(0.05)
         print(f"[trajectory] timeout, final max error {last_max_error:.4f} rad", flush=True)
+        self._hold_position()
         goal_handle.abort()
         return self._result(FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED, "Isaac did not reach the final waypoint")
 

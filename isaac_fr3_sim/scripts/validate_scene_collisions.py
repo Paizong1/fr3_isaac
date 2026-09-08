@@ -38,8 +38,16 @@ def main() -> int:
         for _ in range(30):
             world.step(render=False)
         settled = z(banana)
+        banana_bounds = UsdGeom.BBoxCache(
+            Usd.TimeCode.Default(), [UsdGeom.Tokens.default_]
+        ).ComputeWorldBound(banana).ComputeAlignedBox()
         print(f"ground top z: {ground_top:.4f}")
         print(f"banana z: {before:.4f} -> {after:.4f} -> {settled:.4f}")
+        print(
+            "banana bounds z: "
+            f"{float(banana_bounds.GetMin()[2]):.4f} .. "
+            f"{float(banana_bounds.GetMax()[2]):.4f}"
+        )
         if settled < ground_top - 0.005:
             raise RuntimeError("banana passed through the ground")
         if abs(settled - after) > 0.01:

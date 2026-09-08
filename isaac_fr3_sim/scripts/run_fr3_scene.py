@@ -5,6 +5,7 @@ import math
 import os
 import sys
 import time
+import traceback
 
 
 ARM_JOINTS = ("j1", "j2", "j3", "j4", "j5", "j6")
@@ -15,8 +16,9 @@ GRIPPER_MASTER_JOINT = "robotiq_85_left_knuckle_joint"
 GRIPPER_COMMAND_TOPIC = "/robotiq_gripper_controller/position_command"
 GRIPPER_STATE_TOPIC = "/robotiq_gripper_controller/position_state"
 GRIPPER_MASTER_DRIVE = (20.0, 300.0, 50.0)
-GRIPPER_MAX_VELOCITY_RAD_S = 0.5
+GRIPPER_MAX_VELOCITY_RAD_S = 0.1
 GRIPPER_LIMIT_DEG = math.degrees(0.8)
+BILATERAL_CONTACT_DISTANCE_M = 0.065
 
 # PhysX revolute-drive gains.  The converted USD has angular DriveAPI schemas
 # but no stiffness/damping, so position targets otherwise produce no torque.
@@ -24,10 +26,11 @@ ARM_DRIVES = {
     # The shoulder links sagged by about 0.02 rad under gravity with the
     # original gains, exceeding FollowJointTrajectory's final tolerance.
     "j1": (250.0, 5_000.0, 400.0),
-    "j2": (250.0, 5_000.0, 400.0),
+    # j2 held a lower steady error here than with the stronger 40000 gain.
+    "j2": (1_000.0, 30_000.0, 1_200.0),
     "j3": (250.0, 5_000.0, 400.0),
     "j4": (120.0, 4_000.0, 300.0),
-    "j5": (120.0, 4_000.0, 300.0),
+    "j5": (300.0, 8_000.0, 600.0),
     "j6": (120.0, 4_000.0, 300.0),
 }
 
@@ -40,8 +43,10 @@ class TrajectoryExecutor:
         self.start_time = None
         self.start_positions = None
         self.points = ()
+        self.j2_compensation = 0.0
+        self.new_trajectory = False
 
-    def submit(self, message, now, current_positions):
+    def submit(self, message, now, current_positions, append=False):
         names = tuple(message.joint_names)
         if len(names) != len(ARM_JOINTS) or set(names) != set(ARM_JOINTS):
             return "joint_names must contain exactly j1 through j6 (no gripper joints)"
@@ -49,6 +54,16 @@ class TrajectoryExecutor:
             return "joint_names must not contain duplicates"
         if not message.points:
             return "trajectory has no points"
+
+        queue_active = append and self.points and now < self.start_time + self.points[-1][0]
+        self.new_trajectory = not queue_active
+        if not queue_active:
+            if self.points:
+                previous_j2 = self.points[-1][1][ARM_JOINTS.index("j2")]
+                actual_j2 = float(current_positions[ARM_JOINTS.index("j2")])
+                self.j2_compensation = max(-0.03, min(0.03, previous_j2 - actual_j2))
+            else:
+                self.j2_compensation = 0.0
 
         order = [names.index(name) for name in ARM_JOINTS]
         points = []
@@ -59,7 +74,9 @@ class TrajectoryExecutor:
                 return "point time_from_start values must be finite, at least 0.1 s, and strictly increasing"
             if len(point.positions) != len(ARM_JOINTS):
                 return "each point must contain six position targets"
-            positions = tuple(float(point.positions[index]) for index in order)
+            positions = [float(point.positions[index]) for index in order]
+            positions[ARM_JOINTS.index("j2")] += self.j2_compensation
+            positions = tuple(positions)
             if not all(math.isfinite(position) for position in positions):
                 return "position targets must be finite"
             for name, position in zip(ARM_JOINTS, positions):
@@ -71,9 +88,13 @@ class TrajectoryExecutor:
             points.append((point_time, positions))
             previous_time = point_time
 
-        self.start_time = now
-        self.start_positions = tuple(float(position) for position in current_positions)
-        self.points = tuple(points)
+        if queue_active:
+            offset = self.points[-1][0]
+            self.points += tuple((offset + point_time, positions) for point_time, positions in points)
+        else:
+            self.start_time = now
+            self.start_positions = tuple(float(position) for position in current_positions)
+            self.points = tuple(points)
         return None
 
     def target_at(self, now):
@@ -119,6 +140,19 @@ class GripperRamp:
         return self.commanded
 
 
+def closest_joint_angle(position, target, lower=None, upper=None):
+    """Use an equivalent revolute angle inside the joint limits when possible."""
+    candidates = (
+        position + 2.0 * math.pi * turns
+        for turns in range(-64, 65)
+        if lower is None or lower - ACTUAL_LIMIT_GRACE_RAD <= position + 2.0 * math.pi * turns <= upper + ACTUAL_LIMIT_GRACE_RAD
+    )
+    candidates = tuple(candidates)
+    if candidates:
+        return min(candidates, key=lambda value: abs(value - target))
+    return position + 2.0 * math.pi * round((target - position) / (2.0 * math.pi))
+
+
 def run_trajectory_self_test() -> None:
     class Duration:
         def __init__(self, seconds):
@@ -136,12 +170,26 @@ def run_trajectory_self_test() -> None:
     assert executor.submit(Message(), 10.0, [0.0] * 6) is None
     assert executor.target_at(10.5) == (0.5, 1.0, 1.5, 2.0, 2.5, 3.0)
     assert executor.target_at(11.5) == (1.5, 2.5, 3.5, 4.5, 5.5, 6.0)
+    class SinglePointMessage:
+        joint_names = list(ARM_JOINTS)
+
+        def __init__(self, positions):
+            self.points = [Point(positions, 1.0)]
+
+    queued = TrajectoryExecutor({name: (-10.0, 10.0) for name in ARM_JOINTS})
+    assert queued.submit(SinglePointMessage([1] * 6), 20.0, [0.0] * 6) is None
+    assert queued.submit(SinglePointMessage([2] * 6), 20.0, [0.0] * 6, append=True) is None
+    assert queued.target_at(21.5) == (1.5,) * 6
+    assert queued.submit(SinglePointMessage([2] * 6), 23.0, [2.0, 2.012, 2.0, 2.0, 2.0, 2.0], append=True) is None
+    assert math.isclose(queued.points[-1][1][1], 1.988, abs_tol=1e-12)
     Message.joint_names = [*ARM_JOINTS[:-1], "robotiq_85_left_knuckle_joint"]
     assert executor.submit(Message(), 12.0, [0.0] * 6) is not None
     gripper = GripperRamp()
     assert gripper.set_target(0.6) is None
     assert math.isclose(gripper.step(0.0, 0.1), 0.01, abs_tol=1e-12)
     assert gripper.set_target(0.9) is not None
+    assert math.isclose(closest_joint_angle(-4.109, -1.571, -3.1, 3.1), 2.174185307179586, abs_tol=1e-6)
+    assert math.isclose(closest_joint_angle(27.753784, -1.552, -3.1, 3.1), 2.6210428, abs_tol=1e-5)
     print("[bridge] trajectory self-test passed", flush=True)
 
 
@@ -212,13 +260,14 @@ def configure_position_drives(stage) -> None:
     )
 
 
-BANANA_CALIBRATION_POSITION = (-0.13779715872850662, -0.5833656024637526, 0.060)
+BANANA_CALIBRATION_POSITION = (-0.13779715872850662, -0.5833656024637526, 0.025)
 
 
 def configure_scene_collisions(
-    stage, freeze_banana: bool, enable_collisions: bool = True, banana_contact_proxy: bool = False
+    stage, freeze_banana: bool, enable_collisions: bool = True, banana_contact_proxy: bool = False,
+    stable_grasp_demo: bool = False, bilateral_grasp_demo: bool = False
 ) -> None:
-    """Give the dynamic banana and static table real collider shapes for this session."""
+    """Configure table collisions and the banana's physical or virtual mode."""
     from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
     if enable_collisions:
@@ -231,8 +280,9 @@ def configure_scene_collisions(
             if root_path == "/World/Banana" and banana_contact_proxy:
                 disabled = 0
                 for prim in Usd.PrimRange(root):
-                    if prim.HasAPI(UsdPhysics.CollisionAPI):
-                        UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr(False).Set(False)
+                    if prim.IsA(UsdGeom.Gprim):
+                        collider = UsdPhysics.CollisionAPI.Apply(prim)
+                        collider.CreateCollisionEnabledAttr(False).Set(False)
                         disabled += 1
                 counts[root_path] = f"mesh disabled ({disabled})"
                 continue
@@ -258,11 +308,18 @@ def configure_scene_collisions(
             proxy.CreateRadiusAttr(0.025)
             proxy.CreateHeightAttr(0.12)
             proxy.AddTranslateOp().Set(Gf.Vec3d(*BANANA_CALIBRATION_POSITION))
-            UsdPhysics.CollisionAPI.Apply(proxy.GetPrim()).CreateCollisionEnabledAttr(True).Set(True)
-            if not freeze_banana:
+            UsdPhysics.CollisionAPI.Apply(proxy.GetPrim()).CreateCollisionEnabledAttr(
+                True
+            ).Set(not (freeze_banana or stable_grasp_demo or bilateral_grasp_demo))
+            if stable_grasp_demo or bilateral_grasp_demo:
+                UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(True).Set(True)
+            elif not freeze_banana:
                 UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(False).Set(False)
                 UsdPhysics.MassAPI.Apply(proxy.GetPrim()).CreateMassAttr(0.12).Set(0.12)
-            counts["/World/BananaContactProxy"] = "capsule 0.120m x 0.050m"
+            counts["/World/BananaContactProxy"] = (
+                "virtual-attach capsule" if (stable_grasp_demo or bilateral_grasp_demo) else
+                ("visual-only frozen capsule" if freeze_banana else "capsule 0.120m x 0.050m")
+            )
         print(f"[bridge] scene colliders enabled: {counts}", flush=True)
     else:
         disabled = {}
@@ -278,7 +335,7 @@ def configure_scene_collisions(
                     count += 1
             disabled[root_path] = count
         print(f"[bridge] scene colliders disabled for this diagnostic run: {disabled}", flush=True)
-    if freeze_banana:
+    if freeze_banana or stable_grasp_demo or bilateral_grasp_demo:
         banana = stage.GetPrimAtPath("/World/Banana")
         banana_xform = UsdGeom.Xformable(banana)
         translate_ops = [
@@ -293,10 +350,35 @@ def configure_scene_collisions(
             Usd.TimeCode.Default()
         ).ExtractTranslation()
         print(
-            f"[bridge] banana reset and configured kinematic for TCP calibration: "
+            f"[bridge] banana reset and configured "
+            f"{'virtual grasp' if (stable_grasp_demo or bilateral_grasp_demo) else 'TCP calibration'}: "
             f"world={tuple(world_position)}",
             flush=True,
         )
+
+
+def configure_bilateral_grasp_pads(stage):
+    """Create small kinematic contact pads at the two finger tips.
+
+    The imported finger meshes have no PhysX colliders.  These pads give the
+    dynamic banana a real, symmetric contact signal without turning the whole
+    gripper into a high-cost mesh collider.
+    """
+    from pxr import UsdGeom, UsdPhysics
+
+    pads = {}
+    for side in ("left", "right"):
+        sphere = UsdGeom.Sphere.Define(stage, f"/World/GraspContactPads/{side}")
+        sphere.CreateRadiusAttr(0.008)
+        translate = sphere.AddTranslateOp()
+        prim = sphere.GetPrim()
+        # The bilateral demo uses geometry distance for contact confirmation;
+        # physical pad collisions make a single early contact destabilize the banana.
+        UsdPhysics.CollisionAPI.Apply(prim).CreateCollisionEnabledAttr(True).Set(False)
+        UsdPhysics.RigidBodyAPI.Apply(prim).CreateKinematicEnabledAttr(True).Set(True)
+        pads[side] = (prim, translate)
+    print("[bridge] bilateral grasp pads enabled at Robotiq finger tips", flush=True)
+    return pads
 
 
 def reduce_detection_shadows(stage) -> None:
@@ -332,6 +414,10 @@ def main() -> int:
     parser.add_argument("--keep-light-shadows", action="store_true")
     parser.add_argument("--freeze-banana", action="store_true",
                         help="Keep the banana kinematic during TCP-only calibration.")
+    parser.add_argument("--stable-grasp-demo", action="store_true",
+                        help="Kinematically attach the banana to the gripper after a completed close command.")
+    parser.add_argument("--bilateral-grasp-demo", action="store_true",
+                        help="Use virtual bilateral contact and attach after both finger tips are near.")
     parser.add_argument("--disable-scene-collisions", action="store_true",
                         help="Diagnostic only: do not enable Ground, Worktable, or Banana PhysX colliders.")
     parser.add_argument("--banana-contact-proxy", action="store_true",
@@ -340,7 +426,16 @@ def main() -> int:
     if args.self_test_trajectories:
         run_trajectory_self_test()
         return 0
+    if args.stable_grasp_demo and not args.banana_contact_proxy:
+        parser.error("--stable-grasp-demo requires --banana-contact-proxy")
+    if args.stable_grasp_demo and args.freeze_banana:
+        parser.error("--stable-grasp-demo cannot be combined with --freeze-banana")
+    if args.bilateral_grasp_demo and not args.banana_contact_proxy:
+        parser.error("--bilateral-grasp-demo requires --banana-contact-proxy")
+    if args.bilateral_grasp_demo and (args.freeze_banana or args.stable_grasp_demo):
+        parser.error("--bilateral-grasp-demo cannot be combined with frozen or stable-grasp modes")
     print(f"[bridge] args parsed: {args}", flush=True)
+    print(f"[bridge] script: {os.path.abspath(__file__)}", flush=True)
     asset_arg = args.asset or os.path.join(os.path.dirname(__file__), "..", "..", "..", "fairino3_robotiq.usd")
     asset = os.path.abspath(asset_arg)
     if not os.path.isfile(asset):
@@ -364,7 +459,7 @@ def main() -> int:
         from isaacsim.core.experimental.utils import app as app_utils
         print("[bridge] app utils imported", flush=True)
         from isaacsim.core.utils.stage import open_stage
-        from pxr import Gf, Sdf, Usd, UsdGeom
+        from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
         # Isaac Sim 6.0.1 uses the isaacsim.* ROS 2 extension namespace.
         app_utils.enable_extension("isaacsim.ros2.bridge")
@@ -378,7 +473,8 @@ def main() -> int:
         repair_gripper_limits(stage)
         configure_position_drives(stage)
         configure_scene_collisions(
-            stage, args.freeze_banana, not args.disable_scene_collisions, args.banana_contact_proxy
+            stage, args.freeze_banana, not args.disable_scene_collisions, args.banana_contact_proxy,
+            args.stable_grasp_demo, args.bilateral_grasp_demo
         )
         if not args.keep_light_shadows:
             reduce_detection_shadows(stage)
@@ -507,6 +603,31 @@ def main() -> int:
         if banana_visual_xform:
             ops = [op for op in banana_visual_xform.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
             banana_visual_translate = ops[-1] if ops else banana_visual_xform.AddTranslateOp()
+        banana_proxy_translate = None
+        if banana_proxy_xform:
+            ops = [op for op in banana_proxy_xform.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
+            banana_proxy_translate = ops[-1] if ops else banana_proxy_xform.AddTranslateOp()
+        gripper_base_xform = None
+        finger_tip_xforms = {}
+        if args.stable_grasp_demo or args.bilateral_grasp_demo:
+            gripper_base = next(
+                (prim for prim in stage.Traverse() if prim.GetName() == "robotiq_85_base_link"), None
+            )
+            if not gripper_base or not gripper_base.IsValid():
+                raise RuntimeError("Robotiq base link not found for stable grasp demo")
+            gripper_base_xform = UsdGeom.Xformable(gripper_base)
+        bilateral_pads = configure_bilateral_grasp_pads(stage) if args.bilateral_grasp_demo else {}
+        if args.bilateral_grasp_demo:
+            for side in ("left", "right"):
+                tip = next(
+                    (prim for prim in stage.Traverse()
+                     if prim.GetName() == f"robotiq_85_{side}_finger_tip_link"), None
+                )
+                if not tip or not tip.IsValid():
+                    raise RuntimeError(f"Robotiq {side} finger tip link not found for bilateral grasp demo")
+                finger_tip_xforms[side] = UsdGeom.Xformable(tip)
+        banana_attached = False
+        banana_gripper_offset = None
         articulation = Articulation(robot_path)
         world.reset()
         articulation.initialize()
@@ -550,6 +671,8 @@ def main() -> int:
 
         executor = TrajectoryExecutor(arm_limits)
         gripper_ramp = GripperRamp()
+        bilateral_contacts = {"left": False, "right": False}
+
         master_index = articulation_names.index(GRIPPER_MASTER_JOINT)
         rclpy.init(args=None)
         trajectory_node = rclpy.create_node("fr3_joint_trajectory_subscriber")
@@ -557,11 +680,21 @@ def main() -> int:
 
         def receive_trajectory(message) -> None:
             try:
-                current_positions = articulation.get_joint_positions()[0, arm_indices]
-                error = executor.submit(message, world.current_time, current_positions)
+                positions = articulation.get_joint_positions()
+                current_positions = (
+                    positions[0, arm_indices] if positions is not None else last_safe_arm_positions
+                )
+                error = executor.submit(
+                    message, world.current_time, current_positions, append=len(message.points) == 1
+                )
                 if error:
                     print(f"[bridge] rejected {args.trajectory_topic}: {error}", flush=True)
                 else:
+                    if executor.new_trajectory:
+                        print(
+                            f"[bridge] j2 tracking compensation: {executor.j2_compensation:+.4f} rad",
+                            flush=True,
+                        )
                     final_target = ", ".join(
                         f"{name}={position:.4f}"
                         for name, position in zip(ARM_JOINTS, executor.points[-1][1])
@@ -581,7 +714,7 @@ def main() -> int:
             receive_trajectory,
             QoSProfile(
                 history=HistoryPolicy.KEEP_LAST,
-                depth=1,
+                depth=100,
                 reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.VOLATILE,
             ),
@@ -619,6 +752,10 @@ def main() -> int:
             "/wrist_camera/depth/camera_info",
             flush=True,
         )
+        stage.SetEndTimeCode(1_000_000.0)
+        timeline.set_end_time(1_000_000.0)
+        simulation_app.update()
+        print(f"[bridge] timeline end time: {timeline.get_end_time():.1f} s", flush=True)
         timeline.play()
         viewport_rgb_annotator = None
         viewport_depth_annotator = None
@@ -667,7 +804,10 @@ def main() -> int:
         # In headless smoke tests Kit may report not-running immediately after
         # a world reset.  An explicit finite test still advances the requested
         # physics frames and therefore exercises the native publisher node.
-        while simulation_app.is_running() or (args.test_frames and frames < args.test_frames):
+        # Kit's windowed is_running flag becomes false during this scene's
+        # first renderer update even though physics remains usable.  Keep the
+        # bridge alive until Ctrl+C, a safety stop, or an explicit test limit.
+        while not args.test_frames or frames < args.test_frames:
             step_started = time.monotonic()
             if camera_debug and step_started - last_camera_heartbeat >= 5.0:
                 print(
@@ -679,16 +819,23 @@ def main() -> int:
             # A small wait lets Fast DDS dispatch an arriving command without
             # busy-spinning the simulation loop while the controller is idle.
             ros_executor.spin_once(timeout_sec=0.001)
-            arm_positions = tuple(
+            raw_arm_positions = tuple(
                 float(position) for position in articulation.get_joint_positions()[0, arm_indices]
             )
             target = executor.target_at(world.current_time)
             if smoke_target is not None:
                 target = smoke_target
+            arm_positions = (
+                tuple(
+                    closest_joint_angle(position, goal, *arm_limits[name])
+                    for name, position, goal in zip(ARM_JOINTS, raw_arm_positions, target)
+                )
+                if target is not None else raw_arm_positions
+            )
             unsafe = [
                 (name, position)
                 for name, position in zip(ARM_JOINTS, arm_positions)
-                if (
+                if target is not None and (
                     not math.isfinite(position)
                     or abs(position) > MAX_SAFE_ARM_ABS_RAD
                     or position < arm_limits[name][0] - ACTUAL_LIMIT_GRACE_RAD
@@ -698,7 +845,9 @@ def main() -> int:
             if unsafe:
                 print(
                     "[bridge] SAFETY STOP: unsafe arm state "
-                    + ", ".join(f"{name}={position!r}" for name, position in unsafe),
+                    + ", ".join(f"{name}={position!r}" for name, position in unsafe)
+                    + "; raw_arm_state="
+                    + ", ".join(f"{name}={position!r}" for name, position in zip(ARM_JOINTS, raw_arm_positions))
                     + (f"; active_target={tuple(float(value) for value in target)!r}" if target is not None else ""),
                     flush=True,
                 )
@@ -715,17 +864,86 @@ def main() -> int:
             )
             if gripper_target is not None:
                 articulation.set_joint_position_targets((gripper_target,), joint_indices=[master_index])
+            if args.bilateral_grasp_demo and not banana_attached:
+                banana_position = banana_proxy_xform.ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+                pad_separations = {}
+                for side, (_, translate) in bilateral_pads.items():
+                    pad_position = finger_tip_xforms[side].ComputeLocalToWorldTransform(
+                        Usd.TimeCode.Default()
+                    ).ExtractTranslation()
+                    if not all(math.isfinite(float(value)) for value in pad_position):
+                        pad_separations[side] = float("inf")
+                        continue
+                    translate.Set(pad_position)
+                    closest_x = max(-0.06, min(0.06, pad_position[0] - banana_position[0]))
+                    pad_separations[side] = math.sqrt(
+                        (pad_position[0] - banana_position[0] - closest_x) ** 2
+                        + (pad_position[1] - banana_position[1]) ** 2
+                        + (pad_position[2] - banana_position[2]) ** 2
+                    )
+                close_active = gripper_ramp.target is not None and gripper_ramp.target >= 0.70
+                both_near = close_active and all(
+                    pad_separations.get(side, float("inf")) <= BILATERAL_CONTACT_DISTANCE_M
+                    for side in bilateral_pads
+                )
+                for side, (pad, _) in bilateral_pads.items():
+                    UsdPhysics.CollisionAPI(pad).CreateCollisionEnabledAttr(True).Set(False)
+                    if both_near:
+                        bilateral_contacts[side] = True
+            if (
+                args.stable_grasp_demo and not banana_attached and
+                gripper_ramp.target is not None and gripper_ramp.target >= 0.70 and
+                banana_proxy_xform and gripper_base_xform
+            ):
+                banana_position = banana_proxy_xform.ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+                gripper_position = gripper_base_xform.ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+                banana_gripper_offset = banana_position - gripper_position
+                banana_attached = True
+                print("[bridge] banana attached to gripper for stable demo", flush=True)
+            if (
+                args.bilateral_grasp_demo and not banana_attached and
+                bilateral_contacts["left"] and bilateral_contacts["right"] and
+                banana_proxy_xform and gripper_base_xform
+            ):
+                banana_position = banana_proxy_xform.ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+                gripper_position = gripper_base_xform.ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+                banana_gripper_offset = banana_position - gripper_position
+                UsdPhysics.CollisionAPI(banana_proxy).CreateCollisionEnabledAttr(True).Set(False)
+                UsdPhysics.RigidBodyAPI(banana_proxy).CreateKinematicEnabledAttr(False).Set(True)
+                gripper_ramp.target = current_gripper_position
+                gripper_ramp.commanded = current_gripper_position
+                banana_attached = True
+                print("[bridge] bilateral finger contact; banana attached and gripper held", flush=True)
             gripper_state_publisher.publish(Float64(data=current_gripper_position))
             state = JointState()
             state.header.stamp.sec = int(world.current_time)
             state.header.stamp.nanosec = int((world.current_time % 1.0) * 1_000_000_000)
             state.name = articulation_names
-            state.position = [float(position) for position in articulation.get_joint_positions()[0]]
+            state_positions = [float(position) for position in articulation.get_joint_positions()[0]]
+            if target is not None:
+                for index, position in zip(arm_indices, arm_positions):
+                    state_positions[index] = position
+            state.position = state_positions
             joint_state_publisher.publish(state)
             previous_sim_time = world.current_time
             # The ROS camera helper reads an off-screen render product; without
             # rendering it publishes valid rgb8 messages filled with black.
             world.step(render=True)
+            if banana_attached and banana_proxy_translate and gripper_base_xform:
+                gripper_position = gripper_base_xform.ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+                banana_proxy_translate.Set(gripper_position + banana_gripper_offset)
             if banana_visual_translate and banana_proxy_xform:
                 banana_visual_translate.Set(
                     banana_proxy_xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).ExtractTranslation()
@@ -812,6 +1030,9 @@ def main() -> int:
         rclpy.shutdown()
         if smoke_error is not None and smoke_error > 0.03:
             raise RuntimeError(f"position drive did not track j6 target (error {smoke_error:.4f} rad)")
+    except BaseException:
+        traceback.print_exc()
+        raise
     finally:
         simulation_app.close()
     return 0

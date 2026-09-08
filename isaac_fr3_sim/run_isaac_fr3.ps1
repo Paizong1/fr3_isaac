@@ -6,7 +6,11 @@ param(
   [int]$CameraHeight = 480,
   [double]$CameraTickRate = 1.0,
   [switch]$Ros2,
-  [switch]$FreezeBanana
+  [switch]$FreezeBanana,
+  [switch]$BananaContactProxy,
+  [switch]$StableGraspDemo,
+  [switch]$BilateralGraspDemo,
+  [switch]$UseActiveViewportRgb
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,10 +19,12 @@ if (-not $Asset) {
 }
 if ($Ros2) {
   . (Join-Path $PSScriptRoot 'setup_isaac_ros2_env.ps1') -IsaacRoot (Split-Path $IsaacPython -Parent) -DomainId $DomainId
-  # Detection must consume the same render product visible in the Isaac GUI.
-  # Do not add --headless here: that off-screen product is black on this setup.
-  $runnerArgs = @((Join-Path $PSScriptRoot 'scripts\run_fr3_scene.py'), '--asset', $Asset, '--domain-id', $DomainId, '--camera-width', $CameraWidth, '--camera-height', $CameraHeight, '--camera-tick-rate', $CameraTickRate, '--rgb-from-active-viewport')
+  $runnerArgs = @((Join-Path $PSScriptRoot 'scripts\run_fr3_scene.py'), '--asset', $Asset, '--domain-id', $DomainId, '--camera-width', $CameraWidth, '--camera-height', $CameraHeight, '--camera-tick-rate', $CameraTickRate)
+  if ($UseActiveViewportRgb) { $runnerArgs += '--rgb-from-active-viewport' }
   if ($FreezeBanana) { $runnerArgs += '--freeze-banana' }
+  if ($BananaContactProxy) { $runnerArgs += '--banana-contact-proxy' }
+  if ($StableGraspDemo) { $runnerArgs += '--stable-grasp-demo' }
+  if ($BilateralGraspDemo) { $runnerArgs += '--bilateral-grasp-demo' }
   & $IsaacPython @runnerArgs
 } else {
   & $IsaacPython (Join-Path $PSScriptRoot 'scripts\run_fr3_native.py') --asset $Asset
