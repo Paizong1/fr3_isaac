@@ -16,9 +16,15 @@ GRIPPER_MASTER_JOINT = "robotiq_85_left_knuckle_joint"
 GRIPPER_COMMAND_TOPIC = "/robotiq_gripper_controller/position_command"
 GRIPPER_STATE_TOPIC = "/robotiq_gripper_controller/position_state"
 GRIPPER_MASTER_DRIVE = (20.0, 300.0, 50.0)
+GRIPPER_FRICTION_CLOSE_DRIVE = (8.0, 120.0, 80.0)
+GRIPPER_HOLD_DRIVE = (5.0, 75.0, 100.0)
 GRIPPER_MAX_VELOCITY_RAD_S = 0.1
 GRIPPER_LIMIT_DEG = math.degrees(0.8)
 BILATERAL_CONTACT_DISTANCE_M = 0.065
+FRICTION_STATIC_FRICTION = 0.7
+FRICTION_DYNAMIC_FRICTION = 0.55
+FRICTION_HOLD_FORCE_N = 0.5
+FRICTION_HOLD_SETTLE_SEC = 0.03
 
 # PhysX revolute-drive gains.  The converted USD has angular DriveAPI schemas
 # but no stiffness/damping, so position targets otherwise produce no torque.
@@ -327,7 +333,7 @@ BANANA_CALIBRATION_POSITION = (-0.13779715872850662, -0.5833656024637526, 0.025)
 
 def configure_scene_collisions(
     stage, freeze_banana: bool, enable_collisions: bool = True, banana_contact_proxy: bool = False,
-    stable_grasp_demo: bool = False, bilateral_grasp_demo: bool = False
+    stable_grasp_demo: bool = False, bilateral_grasp_demo: bool = False, friction_grasp: bool = False
 ) -> None:
     """Configure table collisions and the banana's physical or virtual mode."""
     from pxr import Gf, Usd, UsdGeom, UsdPhysics
@@ -341,12 +347,16 @@ def configure_scene_collisions(
                 continue
             if root_path == "/World/Banana" and banana_contact_proxy:
                 disabled = 0
+                rigid_bodies_disabled = 0
                 for prim in Usd.PrimRange(root):
                     if prim.IsA(UsdGeom.Gprim):
                         collider = UsdPhysics.CollisionAPI.Apply(prim)
                         collider.CreateCollisionEnabledAttr(False).Set(False)
                         disabled += 1
-                counts[root_path] = f"mesh disabled ({disabled})"
+                    if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                        UsdPhysics.RigidBodyAPI(prim).CreateRigidBodyEnabledAttr(False).Set(False)
+                        rigid_bodies_disabled += 1
+                counts[root_path] = f"visual-only mesh ({disabled} colliders, {rigid_bodies_disabled} bodies disabled)"
                 continue
             count = 0
             try:
@@ -370,17 +380,19 @@ def configure_scene_collisions(
             proxy.CreateRadiusAttr(0.025)
             proxy.CreateHeightAttr(0.12)
             proxy.AddTranslateOp().Set(Gf.Vec3d(*BANANA_CALIBRATION_POSITION))
+            UsdGeom.Imageable(proxy.GetPrim()).CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
             UsdPhysics.CollisionAPI.Apply(proxy.GetPrim()).CreateCollisionEnabledAttr(
                 True
             ).Set(not (freeze_banana or stable_grasp_demo or bilateral_grasp_demo))
             if stable_grasp_demo or bilateral_grasp_demo:
                 UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(True).Set(True)
             elif not freeze_banana:
-                UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(False).Set(False)
+                UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(True).Set(friction_grasp)
                 UsdPhysics.MassAPI.Apply(proxy.GetPrim()).CreateMassAttr(0.12).Set(0.12)
             counts["/World/BananaContactProxy"] = (
                 "virtual-attach capsule" if (stable_grasp_demo or bilateral_grasp_demo) else
-                ("visual-only frozen capsule" if freeze_banana else "capsule 0.120m x 0.050m")
+                ("visual-only frozen capsule" if freeze_banana else
+                 ("kinematic friction capsule" if friction_grasp else "capsule 0.120m x 0.050m"))
             )
         print(f"[bridge] scene colliders enabled: {counts}", flush=True)
     else:
@@ -434,13 +446,41 @@ def configure_bilateral_grasp_pads(stage):
         sphere.CreateRadiusAttr(0.008)
         translate = sphere.AddTranslateOp()
         prim = sphere.GetPrim()
-        # The bilateral demo uses geometry distance for contact confirmation;
-        # physical pad collisions make a single early contact destabilize the banana.
         UsdPhysics.CollisionAPI.Apply(prim).CreateCollisionEnabledAttr(True).Set(False)
         UsdPhysics.RigidBodyAPI.Apply(prim).CreateKinematicEnabledAttr(True).Set(True)
         pads[side] = (prim, translate)
     print("[bridge] bilateral grasp pads enabled at Robotiq finger tips", flush=True)
     return pads
+
+
+def configure_friction_grasp_pads(stage, finger_tips, banana_proxy):
+    """Add collider-only pads below the articulated finger-tip links."""
+    from isaacsim.sensors.experimental.physics import Contact
+    from pxr import UsdGeom, UsdPhysics, UsdShade
+
+    material = UsdShade.Material.Define(stage, "/World/FrictionGraspMaterial")
+    material_api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
+    material_api.CreateStaticFrictionAttr(FRICTION_STATIC_FRICTION)
+    material_api.CreateDynamicFrictionAttr(FRICTION_DYNAMIC_FRICTION)
+    UsdShade.MaterialBindingAPI.Apply(banana_proxy).Bind(material)
+    sensor_paths = {}
+    for side, tip in finger_tips.items():
+        pad = UsdGeom.Sphere.Define(stage, f"{tip.GetPath()}/friction_pad")
+        pad.CreateRadiusAttr(0.008)
+        prim = pad.GetPrim()
+        UsdPhysics.CollisionAPI.Apply(prim).CreateCollisionEnabledAttr(True).Set(True)
+        UsdShade.MaterialBindingAPI.Apply(prim).Bind(material)
+        sensor_path = f"{tip.GetPath()}/friction_pad/pressure_sensor"
+        Contact.create(
+            sensor_path,
+            translations=[[0.0, 0.0, 0.0]],
+            min_threshold=0.0,
+            max_threshold=100.0,
+            radius=-1.0,
+        )
+        sensor_paths[side] = sensor_path
+    print("[bridge] friction grasp pads attached to Robotiq finger-tip links", flush=True)
+    return sensor_paths
 
 
 def reduce_detection_shadows(stage) -> None:
@@ -480,6 +520,8 @@ def main() -> int:
                         help="Kinematically attach the banana to the gripper after a completed close command.")
     parser.add_argument("--bilateral-grasp-demo", action="store_true",
                         help="Use virtual bilateral contact and attach after both finger tips are near.")
+    parser.add_argument("--friction-grasp", action="store_true",
+                        help="Grip the dynamic banana capsule through physical finger-pad friction.")
     parser.add_argument("--disable-scene-collisions", action="store_true",
                         help="Diagnostic only: do not enable Ground, Worktable, or Banana PhysX colliders.")
     parser.add_argument("--banana-contact-proxy", action="store_true",
@@ -496,6 +538,10 @@ def main() -> int:
         parser.error("--bilateral-grasp-demo requires --banana-contact-proxy")
     if args.bilateral_grasp_demo and (args.freeze_banana or args.stable_grasp_demo):
         parser.error("--bilateral-grasp-demo cannot be combined with frozen or stable-grasp modes")
+    if args.friction_grasp and not args.banana_contact_proxy:
+        parser.error("--friction-grasp requires --banana-contact-proxy")
+    if args.friction_grasp and (args.freeze_banana or args.stable_grasp_demo or args.bilateral_grasp_demo):
+        parser.error("--friction-grasp cannot be combined with frozen or virtual-attach modes")
     print(f"[bridge] args parsed: {args}", flush=True)
     print(f"[bridge] script: {os.path.abspath(__file__)}", flush=True)
     asset_arg = args.asset or os.path.join(os.path.dirname(__file__), "..", "..", "..", "fairino3_robotiq.usd")
@@ -521,10 +567,12 @@ def main() -> int:
         from isaacsim.core.experimental.utils import app as app_utils
         print("[bridge] app utils imported", flush=True)
         from isaacsim.core.utils.stage import open_stage
-        from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
+        from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics, UsdShade
 
         # Isaac Sim 6.0.1 uses the isaacsim.* ROS 2 extension namespace.
         app_utils.enable_extension("isaacsim.ros2.bridge")
+        if args.friction_grasp:
+            app_utils.enable_extension("isaacsim.sensors.experimental.physics")
         simulation_app.update()
         print(f"[bridge] opening asset: {asset}", flush=True)
         if not open_stage(asset):
@@ -536,7 +584,7 @@ def main() -> int:
         configure_position_drives(stage)
         configure_scene_collisions(
             stage, args.freeze_banana, not args.disable_scene_collisions, args.banana_contact_proxy,
-            args.stable_grasp_demo, args.bilateral_grasp_demo
+            args.stable_grasp_demo, args.bilateral_grasp_demo, args.friction_grasp
         )
         if not args.keep_light_shadows:
             reduce_detection_shadows(stage)
@@ -662,15 +710,25 @@ def main() -> int:
         banana_visual_xform = UsdGeom.Xformable(banana_visual) if banana_visual else None
         banana_proxy_xform = UsdGeom.Xformable(banana_proxy) if banana_proxy else None
         banana_visual_translate = None
+        banana_visual_orient = None
         if banana_visual_xform:
-            ops = [op for op in banana_visual_xform.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
-            banana_visual_translate = ops[-1] if ops else banana_visual_xform.AddTranslateOp()
+            ops = banana_visual_xform.GetOrderedXformOps()
+            translate_ops = [op for op in ops if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
+            orient_ops = [op for op in ops if op.GetOpType() == UsdGeom.XformOp.TypeOrient]
+            banana_visual_translate = translate_ops[-1] if translate_ops else banana_visual_xform.AddTranslateOp()
+            banana_visual_orient = orient_ops[-1] if orient_ops else banana_visual_xform.AddOrientOp()
+            proxy_world = banana_proxy_xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+            banana_visual_translate.Set(proxy_world.ExtractTranslation())
+            rotation = proxy_world.ExtractRotationQuat()
+            banana_visual_orient.Set(
+                Gf.Quatf(float(rotation.GetReal()), Gf.Vec3f(*rotation.GetImaginary()))
+            )
         banana_proxy_translate = None
         if banana_proxy_xform:
             ops = [op for op in banana_proxy_xform.GetOrderedXformOps() if op.GetOpType() == UsdGeom.XformOp.TypeTranslate]
             banana_proxy_translate = ops[-1] if ops else banana_proxy_xform.AddTranslateOp()
         gripper_base_xform = None
-        finger_tip_xforms = {}
+        finger_tips = {}
         if args.stable_grasp_demo or args.bilateral_grasp_demo:
             gripper_base = next(
                 (prim for prim in stage.Traverse() if prim.GetName() == "robotiq_85_base_link"), None
@@ -678,8 +736,7 @@ def main() -> int:
             if not gripper_base or not gripper_base.IsValid():
                 raise RuntimeError("Robotiq base link not found for stable grasp demo")
             gripper_base_xform = UsdGeom.Xformable(gripper_base)
-        bilateral_pads = configure_bilateral_grasp_pads(stage) if args.bilateral_grasp_demo else {}
-        if args.bilateral_grasp_demo:
+        if args.bilateral_grasp_demo or args.friction_grasp:
             for side in ("left", "right"):
                 tip = next(
                     (prim for prim in stage.Traverse()
@@ -687,12 +744,35 @@ def main() -> int:
                 )
                 if not tip or not tip.IsValid():
                     raise RuntimeError(f"Robotiq {side} finger tip link not found for bilateral grasp demo")
-                finger_tip_xforms[side] = UsdGeom.Xformable(tip)
+                finger_tips[side] = tip
+        bilateral_pads = configure_bilateral_grasp_pads(stage) if args.bilateral_grasp_demo else {}
+        pressure_sensor_paths = {}
+        if args.friction_grasp:
+            pressure_sensor_paths = configure_friction_grasp_pads(stage, finger_tips, banana_proxy)
         banana_attached = False
         banana_gripper_offset = None
         articulation = Articulation(robot_path)
+        gripper_drive = UsdPhysics.DriveAPI.Apply(
+            stage.GetPrimAtPath(f"{robot_path}/Physics/{GRIPPER_MASTER_JOINT}"), "angular"
+        )
+        gripper_close_drive = GRIPPER_FRICTION_CLOSE_DRIVE if args.friction_grasp else GRIPPER_MASTER_DRIVE
+        if args.friction_grasp:
+            max_force, stiffness, damping = gripper_close_drive
+            gripper_drive.CreateMaxForceAttr(max_force).Set(max_force)
+            gripper_drive.CreateStiffnessAttr(stiffness).Set(stiffness)
+            gripper_drive.CreateDampingAttr(damping).Set(damping)
         world.reset()
         articulation.initialize()
+        pressure_sensors = {}
+        if args.friction_grasp:
+            from isaacsim.sensors.experimental.physics import ContactSensor
+            pressure_sensors = {
+                side: ContactSensor(path) for side, path in pressure_sensor_paths.items()
+            }
+            print(
+                f"[bridge] friction pressure control enabled: threshold={FRICTION_HOLD_FORCE_N:.2f}N",
+                flush=True,
+            )
         articulation_names = list(articulation.dof_names)
         missing = set(joint_names) - set(articulation_names)
         if missing:
@@ -738,6 +818,10 @@ def main() -> int:
 
         executor = TrajectoryExecutor(arm_limits)
         gripper_ramp = GripperRamp()
+        friction_hold_position = None
+        friction_force_since = None
+        friction_physics_active = False
+        last_friction_pressure_report = -float("inf")
         bilateral_contacts = {"left": False, "right": False}
         bilateral_wait_reported = False
 
@@ -788,7 +872,22 @@ def main() -> int:
             ),
         )
         def receive_gripper_target(message) -> None:
-            error = gripper_ramp.set_target(float(message.data))
+            nonlocal friction_hold_position, friction_force_since, friction_physics_active
+            target = float(message.data)
+            if args.friction_grasp and not friction_physics_active and target > 0.001:
+                UsdPhysics.RigidBodyAPI(banana_proxy).CreateKinematicEnabledAttr(False).Set(False)
+                friction_physics_active = True
+                print("[bridge] friction physics enabled for gripper close", flush=True)
+            if args.friction_grasp and friction_hold_position is not None and target >= friction_hold_position:
+                return
+            if args.friction_grasp and friction_hold_position is not None:
+                max_force, stiffness, damping = gripper_close_drive
+                gripper_drive.CreateMaxForceAttr(max_force).Set(max_force)
+                gripper_drive.CreateStiffnessAttr(stiffness).Set(stiffness)
+                gripper_drive.CreateDampingAttr(damping).Set(damping)
+            friction_hold_position = None
+            friction_force_since = None
+            error = gripper_ramp.set_target(target)
             if error:
                 print(f"[bridge] rejected {GRIPPER_COMMAND_TOPIC}: {error}", flush=True)
             else:
@@ -938,7 +1037,7 @@ def main() -> int:
                 ).ExtractTranslation()
                 pad_separations = {}
                 for side, (_, translate) in bilateral_pads.items():
-                    pad_position = finger_tip_xforms[side].ComputeLocalToWorldTransform(
+                    pad_position = UsdGeom.Xformable(finger_tips[side]).ComputeLocalToWorldTransform(
                         Usd.TimeCode.Default()
                     ).ExtractTranslation()
                     if not all(math.isfinite(float(value)) for value in pad_position):
@@ -1016,14 +1115,58 @@ def main() -> int:
             # The ROS camera helper reads an off-screen render product; without
             # rendering it publishes valid rgb8 messages filled with black.
             world.step(render=True)
+            if (
+                args.friction_grasp and friction_hold_position is None and
+                gripper_ramp.target is not None
+            ):
+                forces = {}
+                sensor_valid = {}
+                for side, sensor in pressure_sensors.items():
+                    reading = sensor.get_sensor_reading()
+                    sensor_valid[side] = reading.is_valid
+                    forces[side] = reading.value if reading.is_valid and reading.in_contact else 0.0
+                if world.current_time - last_friction_pressure_report >= 0.5:
+                    print(
+                        "[bridge] friction pressure: "
+                        + ", ".join(
+                            f"{side}={force:.2f}N({'ok' if sensor_valid[side] else 'invalid'})"
+                            for side, force in forces.items()
+                        ) + f", target={gripper_ramp.target:.3f} rad",
+                        flush=True,
+                    )
+                    last_friction_pressure_report = world.current_time
+                current_position = float(articulation.get_joint_positions()[0, master_index])
+                closing = gripper_ramp.target > current_position + 0.001
+                if closing and all(force >= FRICTION_HOLD_FORCE_N for force in forces.values()):
+                    if friction_force_since is None:
+                        friction_force_since = world.current_time
+                    elif world.current_time - friction_force_since >= FRICTION_HOLD_SETTLE_SEC:
+                        friction_hold_position = current_position
+                        gripper_ramp.target = friction_hold_position
+                        gripper_ramp.commanded = friction_hold_position
+                        max_force, stiffness, damping = GRIPPER_HOLD_DRIVE
+                        gripper_drive.CreateMaxForceAttr(max_force).Set(max_force)
+                        gripper_drive.CreateStiffnessAttr(stiffness).Set(stiffness)
+                        gripper_drive.CreateDampingAttr(damping).Set(damping)
+                        print(
+                            "[bridge] friction hold: "
+                            + ", ".join(f"{side}={force:.2f}N" for side, force in forces.items())
+                            + f", position={friction_hold_position:.3f} rad, drive={GRIPPER_HOLD_DRIVE}",
+                            flush=True,
+                        )
+                else:
+                    friction_force_since = None
             if banana_attached and banana_proxy_translate and gripper_base_xform:
                 gripper_position = gripper_base_xform.ComputeLocalToWorldTransform(
                     Usd.TimeCode.Default()
                 ).ExtractTranslation()
                 banana_proxy_translate.Set(gripper_position + banana_gripper_offset)
             if banana_visual_translate and banana_proxy_xform:
-                banana_visual_translate.Set(
-                    banana_proxy_xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).ExtractTranslation()
+                proxy_world = banana_proxy_xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+                banana_visual_translate.Set(proxy_world.ExtractTranslation())
+                rotation = proxy_world.ExtractRotationQuat()
+                banana_visual_orient.Set(
+                    Gf.Quatf(float(rotation.GetReal()), Gf.Vec3f(*rotation.GetImaginary()))
                 )
             simulation_app.update()
             if (

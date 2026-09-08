@@ -450,6 +450,7 @@ int main(int argc, char ** argv)
   const int gripper_close_step_delay_ms = declare_or_get_parameter<int>(node, "gripper_close_step_delay_ms", 350);
   const bool gripper_wait_result = declare_or_get_parameter<bool>(node, "gripper_wait_result", true);
   const bool gripper_timeout_is_success = declare_or_get_parameter<bool>(node, "gripper_timeout_is_success", false);
+  const bool require_gripper_stall = declare_or_get_parameter<bool>(node, "require_gripper_stall", false);
   const int pre_gripper_close_pause_ms = declare_or_get_parameter<int>(node, "pre_gripper_close_pause_ms", 800);
   const int post_gripper_close_settle_ms = declare_or_get_parameter<int>(node, "post_gripper_close_settle_ms", 3000);
   const bool lift_after_close_enable = declare_or_get_parameter<bool>(node, "lift_after_close_enable", false);
@@ -1712,7 +1713,13 @@ int main(int argc, char ** argv)
 
       if (use_direct_gripper_action) {
         const auto per_goal_timeout = std::chrono::milliseconds(std::max(1000, gripper_action_timeout_ms));
+        bool gripper_stalled = false;
         if (gripper_slow_close) {
+          if (require_gripper_stall) {
+            RCLCPP_ERROR(node->get_logger(), "require_gripper_stall requires continuous gripper close");
+            finish_fail("gripper_stall_unavailable");
+            return;
+          }
           RCLCPP_INFO(
             node->get_logger(),
             "Slow gripper close: steps=%d delay_ms=%d (total ~%d ms)",
@@ -1740,8 +1747,14 @@ int main(int argc, char ** argv)
                      gripper_max_effort,
                      per_goal_timeout,
                      gripper_wait_result,
-                     gripper_timeout_is_success)) {
+                     gripper_timeout_is_success,
+                     &gripper_stalled)) {
           finish_fail();
+          return;
+        }
+        if (require_gripper_stall && !gripper_stalled) {
+          RCLCPP_ERROR(node->get_logger(), "Gripper reached the close target without physical contact");
+          finish_fail("gripper_contact_not_detected");
           return;
         }
       } else {

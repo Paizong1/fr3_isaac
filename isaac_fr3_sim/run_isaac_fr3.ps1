@@ -10,6 +10,7 @@ param(
   [switch]$BananaContactProxy,
   [switch]$StableGraspDemo,
   [switch]$BilateralGraspDemo,
+  [switch]$FrictionGrasp,
   [switch]$UseActiveViewportRgb
 )
 
@@ -25,6 +26,7 @@ if ($Ros2) {
   if ($BananaContactProxy) { $runnerArgs += '--banana-contact-proxy' }
   if ($StableGraspDemo) { $runnerArgs += '--stable-grasp-demo' }
   if ($BilateralGraspDemo) { $runnerArgs += '--bilateral-grasp-demo' }
+  if ($FrictionGrasp) { $runnerArgs += '--friction-grasp' }
   & $IsaacPython @runnerArgs
 } else {
   & $IsaacPython (Join-Path $PSScriptRoot 'scripts\run_fr3_native.py') --asset $Asset

@@ -115,6 +115,7 @@ def generate_launch_description():
     gripper_close_step_delay_ms_arg = DeclareLaunchArgument("gripper_close_step_delay_ms", default_value="350")
     gripper_wait_result_arg = DeclareLaunchArgument("gripper_wait_result", default_value="true")
     gripper_timeout_is_success_arg = DeclareLaunchArgument("gripper_timeout_is_success", default_value="true")
+    require_gripper_stall_arg = DeclareLaunchArgument("require_gripper_stall", default_value="false")
     pre_gripper_close_pause_ms_arg = DeclareLaunchArgument("pre_gripper_close_pause_ms", default_value="800")
     post_gripper_close_settle_ms_arg = DeclareLaunchArgument("post_gripper_close_settle_ms", default_value="0")
     lift_after_close_enable_arg = DeclareLaunchArgument("lift_after_close_enable", default_value="false")
@@ -260,6 +261,7 @@ def generate_launch_description():
                 "gripper_close_step_delay_ms": LaunchConfiguration("gripper_close_step_delay_ms"),
                 "gripper_wait_result": LaunchConfiguration("gripper_wait_result"),
                 "gripper_timeout_is_success": LaunchConfiguration("gripper_timeout_is_success"),
+                "require_gripper_stall": LaunchConfiguration("require_gripper_stall"),
                 "pre_gripper_close_pause_ms": LaunchConfiguration("pre_gripper_close_pause_ms"),
                 "post_gripper_close_settle_ms": LaunchConfiguration("post_gripper_close_settle_ms"),
                 "lift_after_close_enable": LaunchConfiguration("lift_after_close_enable"),
@@ -346,6 +348,7 @@ def generate_launch_description():
             gripper_close_step_delay_ms_arg,
             gripper_wait_result_arg,
             gripper_timeout_is_success_arg,
+            require_gripper_stall_arg,
             pre_gripper_close_pause_ms_arg,
             post_gripper_close_settle_ms_arg,
             lift_after_close_enable_arg,
