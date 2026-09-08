@@ -29,6 +29,7 @@ from tf2_ros import Buffer
 from tf2_ros import TransformListener
 import math
 import json
+import copy
 
 from cv_bridge import CvBridge
 
@@ -72,6 +73,7 @@ class Yolov8OverlayNode(Node):
         self.target_object_id = str(self._get_or_declare("target_object_id", "banana-1")).strip()
         self.min_score = float(self._get_or_declare("min_score", 0.5))
         self.target_confirm_frames = max(1, int(self._get_or_declare("target_confirm_frames", 3)))
+        self.freeze_target = bool(self._get_or_declare("freeze_target", True))
         self.depth_window = int(self._get_or_declare("depth_window", 5))
         self.depth_min = float(self._get_or_declare("depth_min", 0.05))
         self.depth_max = float(self._get_or_declare("depth_max", 5.0))
@@ -98,6 +100,7 @@ class Yolov8OverlayNode(Node):
         self._target_label = None
         self._target_confirm_count = 0
         self._target_confirmed = False
+        self._frozen_target_pose = None
         self._rgb_mask_pixels = 0
         self._rgb_max_saturation = 0
         self._latest_depth_msg: Image | None = None
@@ -460,6 +463,10 @@ class Yolov8OverlayNode(Node):
         if not self.publish_3d:
             return
 
+        if self._frozen_target_pose is not None:
+            self.target_pose_pub.publish(self._frozen_target_pose)
+            return
+
         depth_info = self._latest_depth_info
         if depth_info is None:
             self._report_3d_wait_once("waiting for depth image and CameraInfo")
@@ -539,7 +546,7 @@ class Yolov8OverlayNode(Node):
                 pose_cam.pose.position.y = p_cam.point.y
                 pose_cam.pose.position.z = p_cam.point.z
                 pose_cam.pose.orientation.w = 1.0
-                self.target_pose_pub.publish(pose_cam)
+                self._publish_target_pose(pose_cam)
                 self._publish_3d_detection(det_array.header, pose_cam, det, dimensions)
                 return
 
@@ -564,8 +571,18 @@ class Yolov8OverlayNode(Node):
         pose.pose.position.y = p_out.point.y
         pose.pose.position.z = p_out.point.z
         pose.pose.orientation.w = 1.0
-        self.target_pose_pub.publish(pose)
+        self._publish_target_pose(pose)
         self._publish_3d_detection(det_array.header, pose, det, dimensions)
+
+    def _publish_target_pose(self, pose: PoseStamped) -> None:
+        if self.freeze_target and self._frozen_target_pose is None:
+            self._frozen_target_pose = copy.deepcopy(pose)
+            self.get_logger().info(
+                "RGB target frozen in "
+                f"{pose.header.frame_id}: ({pose.pose.position.x:.3f}, "
+                f"{pose.pose.position.y:.3f}, {pose.pose.position.z:.3f})"
+            )
+        self.target_pose_pub.publish(self._frozen_target_pose or pose)
 
     def _report_3d_wait_once(self, reason: str) -> None:
         if self._reported_first_3d or reason in self._reported_3d_wait_reasons:
