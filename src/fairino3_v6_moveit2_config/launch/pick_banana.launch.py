@@ -85,10 +85,10 @@ def generate_launch_description():
     planning_attempts_arg = DeclareLaunchArgument("planning_attempts", default_value="5")
     planning_pipeline_id_arg = DeclareLaunchArgument("planning_pipeline_id", default_value="ompl")
 
-    vel_scale_arg = DeclareLaunchArgument("vel_scale", default_value="0.3")
-    acc_scale_arg = DeclareLaunchArgument("acc_scale", default_value="0.3")
+    vel_scale_arg = DeclareLaunchArgument("vel_scale", default_value="0.5")
+    acc_scale_arg = DeclareLaunchArgument("acc_scale", default_value="0.5")
     lift_vel_scale_arg = DeclareLaunchArgument("lift_vel_scale", default_value="0.05")
-    lift_acc_scale_arg = DeclareLaunchArgument("lift_acc_scale", default_value="0.05")
+    lift_acc_scale_arg = DeclareLaunchArgument("lift_acc_scale", default_value="0.02")
 
     goal_pos_tolerance_arg = DeclareLaunchArgument("goal_pos_tolerance", default_value="0.01")
     goal_ori_tolerance_arg = DeclareLaunchArgument("goal_ori_tolerance", default_value="0.05")
@@ -117,7 +117,7 @@ def generate_launch_description():
     gripper_timeout_is_success_arg = DeclareLaunchArgument("gripper_timeout_is_success", default_value="true")
     require_gripper_stall_arg = DeclareLaunchArgument("require_gripper_stall", default_value="false")
     pre_gripper_close_pause_ms_arg = DeclareLaunchArgument("pre_gripper_close_pause_ms", default_value="800")
-    post_gripper_close_settle_ms_arg = DeclareLaunchArgument("post_gripper_close_settle_ms", default_value="0")
+    post_gripper_close_settle_ms_arg = DeclareLaunchArgument("post_gripper_close_settle_ms", default_value="800")
     lift_after_close_enable_arg = DeclareLaunchArgument("lift_after_close_enable", default_value="false")
     staged_lift_enable_arg = DeclareLaunchArgument("staged_lift_enable", default_value="false")
     staged_lift_first_step_arg = DeclareLaunchArgument("staged_lift_first_step", default_value="0.02")

@@ -204,10 +204,19 @@ bool execute_trajectory(
   if (auto fresh = move_group.getCurrentState(2.0)) {
     start_state = *fresh;
   }
-  moveit_msgs::msg::RobotTrajectory timed = trajectory;
+  moveit_msgs::msg::RobotTrajectory command = trajectory;
+  if (!command.joint_trajectory.points.empty()) {
+    auto & first = command.joint_trajectory.points.front();
+    if (first.positions.size() == command.joint_trajectory.joint_names.size()) {
+      for (size_t i = 0; i < first.positions.size(); ++i) {
+        first.positions[i] = start_state.getVariablePosition(command.joint_trajectory.joint_names[i]);
+      }
+    }
+  }
+  moveit_msgs::msg::RobotTrajectory timed = command;
   try {
     robot_trajectory::RobotTrajectory rt(robot_model, group_name);
-    rt.setRobotTrajectoryMsg(start_state, trajectory);
+    rt.setRobotTrajectoryMsg(start_state, command);
     const double v = std::max(0.0, std::min(1.0, vel_scale));
     const double a = std::max(0.0, std::min(1.0, acc_scale));
     trajectory_processing::IterativeParabolicTimeParameterization iptp;

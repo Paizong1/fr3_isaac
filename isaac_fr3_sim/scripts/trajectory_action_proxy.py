@@ -124,8 +124,14 @@ class TrajectoryActionProxy:
         wire_trajectory.points = [
             JointTrajectoryPoint(positions=list(point.positions), time_from_start=point.time_from_start)
             for point in trajectory.points
-            if point.time_from_start.sec + point.time_from_start.nanosec * 1e-9 > 1e-6
         ]
+        first_time = (
+            wire_trajectory.points[0].time_from_start.sec
+            + wire_trajectory.points[0].time_from_start.nanosec * 1e-9
+        )
+        if first_time <= 1e-6:
+            wire_trajectory.points[0].time_from_start.sec = 0
+            wire_trajectory.points[0].time_from_start.nanosec = 100_000_000
         if not wire_trajectory.points:
             point = trajectory.points[-1]
             wire_trajectory.points = [

@@ -11,20 +11,26 @@ import traceback
 ARM_JOINTS = ("j1", "j2", "j3", "j4", "j5", "j6")
 MAX_SAFE_ARM_ABS_RAD = 2.0 * math.pi
 ACTUAL_LIMIT_GRACE_RAD = 0.1
+J2_COMPENSATION_DEADBAND_RAD = 0.01
 JOINT_TRAJECTORY_TOPIC = "/fairino3_controller/joint_trajectory"
 GRIPPER_MASTER_JOINT = "robotiq_85_left_knuckle_joint"
 GRIPPER_COMMAND_TOPIC = "/robotiq_gripper_controller/position_command"
 GRIPPER_STATE_TOPIC = "/robotiq_gripper_controller/position_state"
 GRIPPER_MASTER_DRIVE = (20.0, 300.0, 50.0)
 GRIPPER_FRICTION_CLOSE_DRIVE = (8.0, 120.0, 80.0)
-GRIPPER_HOLD_DRIVE = (5.0, 75.0, 100.0)
+GRIPPER_HOLD_DRIVE = (8.0, 100.0, 100.0)
 GRIPPER_MAX_VELOCITY_RAD_S = 0.1
 GRIPPER_LIMIT_DEG = math.degrees(0.8)
 BILATERAL_CONTACT_DISTANCE_M = 0.065
-FRICTION_STATIC_FRICTION = 0.7
-FRICTION_DYNAMIC_FRICTION = 0.55
-FRICTION_HOLD_FORCE_N = 0.5
+FRICTION_STATIC_FRICTION = 1.2
+FRICTION_DYNAMIC_FRICTION = 1.0
+FRICTION_HOLD_FORCE_N = 3.5
 FRICTION_HOLD_SETTLE_SEC = 0.03
+TRACKING_COMPENSATION_GAIN = 0.5
+TRACKING_COMPENSATION_LIMIT_RAD = 0.02
+TRACKING_COMPENSATION_RESPONSE_SEC = 0.30
+TRACKING_COMPENSATION_INDICES = (ARM_JOINTS.index("j2"), ARM_JOINTS.index("j3"))
+LIFT_TRACKING_REPORT_SEC = 0.5
 
 # PhysX revolute-drive gains.  The converted USD has angular DriveAPI schemas
 # but no stiffness/damping, so position targets otherwise produce no torque.
@@ -33,10 +39,10 @@ ARM_DRIVES = {
     # original gains, exceeding FollowJointTrajectory's final tolerance.
     "j1": (250.0, 5_000.0, 400.0),
     # j2 held a lower steady error here than with the stronger 40000 gain.
-    "j2": (1_000.0, 30_000.0, 1_200.0),
-    "j3": (250.0, 5_000.0, 400.0),
-    "j4": (120.0, 4_000.0, 300.0),
-    "j5": (300.0, 8_000.0, 600.0),
+    "j2": (1_000.0, 34_000.0, 1_300.0),
+    "j3": (250.0, 9_000.0, 550.0),
+    "j4": (120.0, 7_000.0, 400.0),
+    "j5": (300.0, 12_000.0, 750.0),
     "j6": (120.0, 4_000.0, 300.0),
 }
 
@@ -67,7 +73,11 @@ class TrajectoryExecutor:
             if self.points:
                 previous_j2 = self.points[-1][1][ARM_JOINTS.index("j2")]
                 actual_j2 = float(current_positions[ARM_JOINTS.index("j2")])
-                self.j2_compensation = max(-0.03, min(0.03, previous_j2 - actual_j2))
+                correction = previous_j2 - actual_j2
+                self.j2_compensation = (
+                    max(-0.03, min(0.03, correction))
+                    if abs(correction) >= J2_COMPENSATION_DEADBAND_RAD else 0.0
+                )
             else:
                 self.j2_compensation = 0.0
 
@@ -96,19 +106,6 @@ class TrajectoryExecutor:
 
         if queue_active:
             offset = self.points[-1][0]
-            previous = self.points[-2] if len(self.points) > 1 else (0.0, self.start_positions)
-            current = self.points[-1]
-            following = (offset + points[0][0], points[0][1])
-            zero_tangent_joints = [
-                name for name, velocity in zip(
-                    ARM_JOINTS, self._knot_velocity(previous, current, following)
-                ) if abs(velocity) < 1e-6
-            ]
-            if zero_tangent_joints:
-                print(
-                    "[bridge] queued trajectory junction has zero tangent: "
-                    + ", ".join(zero_tangent_joints), flush=True
-                )
             self.points += tuple((offset + point_time, positions) for point_time, positions in points)
         else:
             self.start_time = now
@@ -216,6 +213,18 @@ def closest_joint_angle(position, target, lower=None, upper=None):
     return position + 2.0 * math.pi * round((target - position) / (2.0 * math.pi))
 
 
+def update_tracking_bias(target, actual, bias, dt):
+    alpha = min(1.0, max(0.0, dt) / TRACKING_COMPENSATION_RESPONSE_SEC)
+    updated = list(bias)
+    for index in TRACKING_COMPENSATION_INDICES:
+        desired = max(
+            -TRACKING_COMPENSATION_LIMIT_RAD,
+            min(TRACKING_COMPENSATION_LIMIT_RAD, TRACKING_COMPENSATION_GAIN * (target[index] - actual[index])),
+        )
+        updated[index] += alpha * (desired - updated[index])
+    return tuple(updated)
+
+
 def run_trajectory_self_test() -> None:
     class Duration:
         def __init__(self, seconds):
@@ -250,6 +259,8 @@ def run_trajectory_self_test() -> None:
     assert queued.target_at(21.5) == (1.625,) * 6
     assert queued.submit(SinglePointMessage([2] * 6), 23.0, [2.0, 2.012, 2.0, 2.0, 2.0, 2.0], append=True) is None
     assert math.isclose(queued.points[-1][1][1], 1.988, abs_tol=1e-12)
+    assert queued.submit(SinglePointMessage([2] * 6), 25.0, [2.0, 1.996, 2.0, 2.0, 2.0, 2.0], append=True) is None
+    assert queued.points[-1][1][1] == 2.0
     Message.joint_names = [*ARM_JOINTS[:-1], "robotiq_85_left_knuckle_joint"]
     assert executor.submit(Message(), 12.0, [0.0] * 6) is not None
     gripper = GripperRamp()
@@ -258,6 +269,8 @@ def run_trajectory_self_test() -> None:
     assert gripper.set_target(0.9) is not None
     assert math.isclose(closest_joint_angle(-4.109, -1.571, -3.1, 3.1), 2.174185307179586, abs_tol=1e-6)
     assert math.isclose(closest_joint_angle(27.753784, -1.552, -3.1, 3.1), 2.6210428, abs_tol=1e-5)
+    bias = update_tracking_bias((0.0, 1.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.98, 0.0, 0.0, 0.0, 0.0), (0.0,) * 6, 0.15)
+    assert math.isclose(bias[1], 0.01, abs_tol=1e-12)
     print("[bridge] trajectory self-test passed", flush=True)
 
 
@@ -333,7 +346,7 @@ BANANA_CALIBRATION_POSITION = (-0.13779715872850662, -0.5833656024637526, 0.025)
 
 def configure_scene_collisions(
     stage, freeze_banana: bool, enable_collisions: bool = True, banana_contact_proxy: bool = False,
-    stable_grasp_demo: bool = False, bilateral_grasp_demo: bool = False, friction_grasp: bool = False
+    stable_grasp_demo: bool = False, bilateral_grasp_demo: bool = False
 ) -> None:
     """Configure table collisions and the banana's physical or virtual mode."""
     from pxr import Gf, Usd, UsdGeom, UsdPhysics
@@ -387,12 +400,12 @@ def configure_scene_collisions(
             if stable_grasp_demo or bilateral_grasp_demo:
                 UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(True).Set(True)
             elif not freeze_banana:
-                UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(True).Set(friction_grasp)
+                UsdPhysics.RigidBodyAPI.Apply(proxy.GetPrim()).CreateKinematicEnabledAttr(True).Set(False)
                 UsdPhysics.MassAPI.Apply(proxy.GetPrim()).CreateMassAttr(0.12).Set(0.12)
             counts["/World/BananaContactProxy"] = (
                 "virtual-attach capsule" if (stable_grasp_demo or bilateral_grasp_demo) else
                 ("visual-only frozen capsule" if freeze_banana else
-                 ("kinematic friction capsule" if friction_grasp else "capsule 0.120m x 0.050m"))
+                 "capsule 0.120m x 0.050m")
             )
         print(f"[bridge] scene colliders enabled: {counts}", flush=True)
     else:
@@ -584,7 +597,7 @@ def main() -> int:
         configure_position_drives(stage)
         configure_scene_collisions(
             stage, args.freeze_banana, not args.disable_scene_collisions, args.banana_contact_proxy,
-            args.stable_grasp_demo, args.bilateral_grasp_demo, args.friction_grasp
+            args.stable_grasp_demo, args.bilateral_grasp_demo
         )
         if not args.keep_light_shadows:
             reduce_detection_shadows(stage)
@@ -820,8 +833,10 @@ def main() -> int:
         gripper_ramp = GripperRamp()
         friction_hold_position = None
         friction_force_since = None
-        friction_physics_active = False
         last_friction_pressure_report = -float("inf")
+        lift_tracking_until = -float("inf")
+        last_lift_tracking_report = -float("inf")
+        lift_tracking_active = False
         bilateral_contacts = {"left": False, "right": False}
         bilateral_wait_reported = False
 
@@ -831,6 +846,7 @@ def main() -> int:
         gripper_node = rclpy.create_node("fr3_gripper_command_subscriber")
 
         def receive_trajectory(message) -> None:
+            nonlocal lift_tracking_active, lift_tracking_until, last_lift_tracking_report
             try:
                 positions = articulation.get_joint_positions()
                 current_positions = (
@@ -841,8 +857,8 @@ def main() -> int:
                 )
                 if error:
                     print(f"[bridge] rejected {args.trajectory_topic}: {error}", flush=True)
-                else:
-                    if executor.new_trajectory:
+                elif executor.new_trajectory:
+                    if abs(executor.j2_compensation) >= 1e-6:
                         print(
                             f"[bridge] j2 tracking compensation: {executor.j2_compensation:+.4f} rad",
                             flush=True,
@@ -856,7 +872,24 @@ def main() -> int:
                         f"{executor.points[-1][0]:.3f}s, final_target=[{final_target}]",
                         flush=True,
                     )
-                    print("[bridge] arm execution mode: physics position targets", flush=True)
+                    if args.friction_grasp and friction_hold_position is not None:
+                        first_error = [
+                            target - actual
+                            for target, actual in zip(executor.points[0][1], current_positions)
+                        ]
+                        print(
+                            "[bridge] lift start error: "
+                            + ", ".join(
+                                f"{name}={error:+.4f}" for name, error in zip(ARM_JOINTS, first_error)
+                            ),
+                            flush=True,
+                        )
+                        lift_tracking_active = True
+                        last_lift_tracking_report = -float("inf")
+                    if lift_tracking_active:
+                        lift_tracking_until = executor.start_time + executor.points[-1][0] + 0.5
+                elif lift_tracking_active:
+                    lift_tracking_until = executor.start_time + executor.points[-1][0] + 0.5
             except Exception as error:
                 print(f"[bridge] rejected {args.trajectory_topic}: callback failed: {error}", flush=True)
 
@@ -872,12 +905,8 @@ def main() -> int:
             ),
         )
         def receive_gripper_target(message) -> None:
-            nonlocal friction_hold_position, friction_force_since, friction_physics_active
+            nonlocal friction_hold_position, friction_force_since
             target = float(message.data)
-            if args.friction_grasp and not friction_physics_active and target > 0.001:
-                UsdPhysics.RigidBodyAPI(banana_proxy).CreateKinematicEnabledAttr(False).Set(False)
-                friction_physics_active = True
-                print("[bridge] friction physics enabled for gripper close", flush=True)
             if args.friction_grasp and friction_hold_position is not None and target >= friction_hold_position:
                 return
             if args.friction_grasp and friction_hold_position is not None:
@@ -890,8 +919,6 @@ def main() -> int:
             error = gripper_ramp.set_target(target)
             if error:
                 print(f"[bridge] rejected {GRIPPER_COMMAND_TOPIC}: {error}", flush=True)
-            else:
-                print(f"[bridge] accepted {GRIPPER_COMMAND_TOPIC}: {message.data:.3f} rad", flush=True)
 
         gripper_node.create_subscription(Float64, GRIPPER_COMMAND_TOPIC, receive_gripper_target, 1)
         gripper_state_publisher = gripper_node.create_publisher(Float64, GRIPPER_STATE_TOPIC, 10)
@@ -968,6 +995,7 @@ def main() -> int:
         last_safe_arm_positions = tuple(
             float(position) for position in articulation.get_joint_positions()[0, arm_indices]
         )
+        tracking_bias = (0.0,) * len(ARM_JOINTS)
         # In headless smoke tests Kit may report not-running immediately after
         # a world reset.  An explicit finite test still advances the requested
         # physics frames and therefore exercises the native publisher node.
@@ -1023,7 +1051,27 @@ def main() -> int:
                 break
             last_safe_arm_positions = arm_positions
             if target is not None:
-                articulation.set_joint_position_targets(target, joint_indices=arm_indices)
+                friction_support_active = (
+                    args.friction_grasp and (
+                        friction_hold_position is not None or
+                        (gripper_ramp.target is not None and gripper_ramp.target >= 0.70)
+                    )
+                )
+                if smoke_target is None and friction_support_active:
+                    tracking_bias = update_tracking_bias(
+                        target,
+                        arm_positions,
+                        tracking_bias,
+                        world.current_time - previous_sim_time,
+                    )
+                    control_target = tuple(
+                        max(arm_limits[name][0], min(arm_limits[name][1], goal + bias))
+                        for name, goal, bias in zip(ARM_JOINTS, target, tracking_bias)
+                    )
+                else:
+                    tracking_bias = (0.0,) * len(ARM_JOINTS)
+                    control_target = target
+                articulation.set_joint_position_targets(control_target, joint_indices=arm_indices)
             current_gripper_position = float(articulation.get_joint_positions()[0, master_index])
             gripper_target = gripper_ramp.step(
                 current_gripper_position,
@@ -1116,6 +1164,37 @@ def main() -> int:
             # rendering it publishes valid rgb8 messages filled with black.
             world.step(render=True)
             if (
+                world.current_time <= lift_tracking_until and
+                world.current_time - last_lift_tracking_report >= LIFT_TRACKING_REPORT_SEC
+            ):
+                desired = executor.target_at(world.current_time)
+                actual = articulation.get_joint_positions()[0, arm_indices]
+                remaining = max(0.0, executor.start_time + executor.points[-1][0] - world.current_time)
+                forces = {
+                    side: sensor.get_sensor_reading().value
+                    for side, sensor in pressure_sensors.items()
+                }
+                print(
+                    "[bridge] lift tracking: "
+                    f"remaining={remaining:.2f}s, error=["
+                    + ", ".join(
+                        f"{name}={target - position:+.4f}"
+                        for name, target, position in zip(ARM_JOINTS, desired, actual)
+                    )
+                    + "] compensation=["
+                    + ", ".join(
+                        f"{ARM_JOINTS[index]}={tracking_bias[index]:+.4f}"
+                        for index in TRACKING_COMPENSATION_INDICES
+                    )
+                    + "] pressure=["
+                    + ", ".join(f"{side}={force:.2f}N" for side, force in forces.items())
+                    + "]",
+                    flush=True,
+                )
+                last_lift_tracking_report = world.current_time
+            elif lift_tracking_active and world.current_time > lift_tracking_until:
+                lift_tracking_active = False
+            if (
                 args.friction_grasp and friction_hold_position is None and
                 gripper_ramp.target is not None
             ):
@@ -1151,7 +1230,8 @@ def main() -> int:
                         print(
                             "[bridge] friction hold: "
                             + ", ".join(f"{side}={force:.2f}N" for side, force in forces.items())
-                            + f", position={friction_hold_position:.3f} rad, drive={GRIPPER_HOLD_DRIVE}",
+                            + f", position={current_position:.3f} rad, target={friction_hold_position:.3f} rad, "
+                            f"drive={GRIPPER_HOLD_DRIVE}",
                             flush=True,
                         )
                 else:
