@@ -26,11 +26,15 @@ FRICTION_STATIC_FRICTION = 1.2
 FRICTION_DYNAMIC_FRICTION = 1.0
 FRICTION_HOLD_FORCE_N = 3.5
 FRICTION_HOLD_SETTLE_SEC = 0.03
+FRICTION_GRASP_SOLVER_POSITION_ITERATIONS = 16
+FRICTION_GRASP_SOLVER_VELOCITY_ITERATIONS = 4
 TRACKING_COMPENSATION_GAIN = 0.5
+TRACKING_HOLD_COMPENSATION_GAIN = 0.5
 TRACKING_COMPENSATION_LIMIT_RAD = 0.02
-TRACKING_COMPENSATION_RESPONSE_SEC = 0.30
+TRACKING_COMPENSATION_RESPONSE_SEC = 0.45
 TRACKING_COMPENSATION_INDICES = (ARM_JOINTS.index("j2"), ARM_JOINTS.index("j3"))
 LIFT_TRACKING_REPORT_SEC = 0.5
+STARTUP_TRACKING_REPORT_SEC = 0.5
 
 # PhysX revolute-drive gains.  The converted USD has angular DriveAPI schemas
 # but no stiffness/damping, so position targets otherwise produce no torque.
@@ -39,7 +43,7 @@ ARM_DRIVES = {
     # original gains, exceeding FollowJointTrajectory's final tolerance.
     "j1": (250.0, 5_000.0, 400.0),
     # j2 held a lower steady error here than with the stronger 40000 gain.
-    "j2": (1_000.0, 34_000.0, 1_300.0),
+    "j2": (1_000.0, 34_000.0, 1_600.0),
     "j3": (250.0, 9_000.0, 550.0),
     "j4": (120.0, 7_000.0, 400.0),
     "j5": (300.0, 12_000.0, 750.0),
@@ -213,16 +217,24 @@ def closest_joint_angle(position, target, lower=None, upper=None):
     return position + 2.0 * math.pi * round((target - position) / (2.0 * math.pi))
 
 
-def update_tracking_bias(target, actual, bias, dt):
+def update_tracking_bias(target, actual, bias, dt, gain=TRACKING_COMPENSATION_GAIN):
     alpha = min(1.0, max(0.0, dt) / TRACKING_COMPENSATION_RESPONSE_SEC)
     updated = list(bias)
     for index in TRACKING_COMPENSATION_INDICES:
         desired = max(
             -TRACKING_COMPENSATION_LIMIT_RAD,
-            min(TRACKING_COMPENSATION_LIMIT_RAD, TRACKING_COMPENSATION_GAIN * (target[index] - actual[index])),
+            min(TRACKING_COMPENSATION_LIMIT_RAD, gain * (target[index] - actual[index])),
         )
         updated[index] += alpha * (desired - updated[index])
     return tuple(updated)
+
+
+def position_relative_to_midpoint(position, left, right):
+    return tuple(value - (left[index] + right[index]) / 2.0 for index, value in enumerate(position))
+
+
+def should_update_friction_bias(smoke_target, friction_bias_locked):
+    return smoke_target is None and not friction_bias_locked
 
 
 def run_trajectory_self_test() -> None:
@@ -269,8 +281,12 @@ def run_trajectory_self_test() -> None:
     assert gripper.set_target(0.9) is not None
     assert math.isclose(closest_joint_angle(-4.109, -1.571, -3.1, 3.1), 2.174185307179586, abs_tol=1e-6)
     assert math.isclose(closest_joint_angle(27.753784, -1.552, -3.1, 3.1), 2.6210428, abs_tol=1e-5)
-    bias = update_tracking_bias((0.0, 1.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.98, 0.0, 0.0, 0.0, 0.0), (0.0,) * 6, 0.15)
+    bias = update_tracking_bias((0.0, 1.0, 0.0, 0.0, 0.0, 0.0), (0.0, 0.98, 0.0, 0.0, 0.0, 0.0), (0.0,) * 6, 0.45)
     assert math.isclose(bias[1], 0.01, abs_tol=1e-12)
+    assert position_relative_to_midpoint((2.0, 3.0, 4.0), (0.0, 0.0, 0.0), (4.0, 2.0, 2.0)) == (0.0, 2.0, 3.0)
+    assert should_update_friction_bias(None, False)
+    assert not should_update_friction_bias((0.0,) * 6, False)
+    assert not should_update_friction_bias(None, True)
     print("[bridge] trajectory self-test passed", flush=True)
 
 
@@ -496,6 +512,25 @@ def configure_friction_grasp_pads(stage, finger_tips, banana_proxy):
     return sensor_paths
 
 
+def configure_friction_grasp_solver(stage):
+    """Increase only the two bodies participating in the friction contact."""
+    from pxr import PhysxSchema
+
+    for path, api_type in (
+        ("/fairino3_v6_robot", PhysxSchema.PhysxArticulationAPI),
+        ("/World/BananaContactProxy", PhysxSchema.PhysxRigidBodyAPI),
+    ):
+        api = api_type.Apply(stage.GetPrimAtPath(path))
+        api.CreateSolverPositionIterationCountAttr().Set(FRICTION_GRASP_SOLVER_POSITION_ITERATIONS)
+        api.CreateSolverVelocityIterationCountAttr().Set(FRICTION_GRASP_SOLVER_VELOCITY_ITERATIONS)
+    print(
+        "[bridge] friction grasp solver: "
+        f"position_iterations={FRICTION_GRASP_SOLVER_POSITION_ITERATIONS}, "
+        f"velocity_iterations={FRICTION_GRASP_SOLVER_VELOCITY_ITERATIONS}",
+        flush=True,
+    )
+
+
 def reduce_detection_shadows(stage) -> None:
     """Disable existing light shadows for the camera session; do not save the USD."""
     disabled = 0
@@ -526,6 +561,8 @@ def main() -> int:
     parser.add_argument("--self-test-trajectories", action="store_true")
     parser.add_argument("--drive-smoke-test", action="store_true",
                         help="hold the arm, move j6 by 0.1 rad, and verify PhysX tracking")
+    parser.add_argument("--startup-tracking", action="store_true",
+                        help="Print arm angles and startup-hold errors before any arm trajectory arrives.")
     parser.add_argument("--keep-light-shadows", action="store_true")
     parser.add_argument("--freeze-banana", action="store_true",
                         help="Keep the banana kinematic during TCP-only calibration.")
@@ -599,6 +636,8 @@ def main() -> int:
             stage, args.freeze_banana, not args.disable_scene_collisions, args.banana_contact_proxy,
             args.stable_grasp_demo, args.bilateral_grasp_demo
         )
+        if args.friction_grasp:
+            configure_friction_grasp_solver(stage)
         if not args.keep_light_shadows:
             reduce_detection_shadows(stage)
         robot_prim = stage.GetPrimAtPath(robot_path)
@@ -833,6 +872,9 @@ def main() -> int:
         gripper_ramp = GripperRamp()
         friction_hold_position = None
         friction_force_since = None
+        friction_hold_relative_position = None
+        friction_hold_finger_midpoint = None
+        friction_bias_locked = False
         last_friction_pressure_report = -float("inf")
         lift_tracking_until = -float("inf")
         last_lift_tracking_report = -float("inf")
@@ -846,7 +888,7 @@ def main() -> int:
         gripper_node = rclpy.create_node("fr3_gripper_command_subscriber")
 
         def receive_trajectory(message) -> None:
-            nonlocal lift_tracking_active, lift_tracking_until, last_lift_tracking_report
+            nonlocal friction_bias_locked, lift_tracking_active, lift_tracking_until, last_lift_tracking_report
             try:
                 positions = articulation.get_joint_positions()
                 current_positions = (
@@ -884,6 +926,7 @@ def main() -> int:
                             ),
                             flush=True,
                         )
+                        friction_bias_locked = True
                         lift_tracking_active = True
                         last_lift_tracking_report = -float("inf")
                     if lift_tracking_active:
@@ -905,7 +948,7 @@ def main() -> int:
             ),
         )
         def receive_gripper_target(message) -> None:
-            nonlocal friction_hold_position, friction_force_since
+            nonlocal friction_bias_locked, friction_hold_finger_midpoint, friction_hold_position, friction_force_since, friction_hold_relative_position
             target = float(message.data)
             if args.friction_grasp and friction_hold_position is not None and target >= friction_hold_position:
                 return
@@ -916,6 +959,9 @@ def main() -> int:
                 gripper_drive.CreateDampingAttr(damping).Set(damping)
             friction_hold_position = None
             friction_force_since = None
+            friction_hold_relative_position = None
+            friction_hold_finger_midpoint = None
+            friction_bias_locked = False
             error = gripper_ramp.set_target(target)
             if error:
                 print(f"[bridge] rejected {GRIPPER_COMMAND_TOPIC}: {error}", flush=True)
@@ -996,6 +1042,28 @@ def main() -> int:
             float(position) for position in articulation.get_joint_positions()[0, arm_indices]
         )
         tracking_bias = (0.0,) * len(ARM_JOINTS)
+        last_startup_tracking_report = -float("inf")
+
+        def finger_midpoint_world_position():
+            if not finger_tips:
+                return None
+            tip_positions = [
+                UsdGeom.Xformable(finger_tips[side]).ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+                for side in ("left", "right")
+            ]
+            return tuple((left + right) / 2.0 for left, right in zip(*tip_positions))
+
+        def banana_relative_to_finger_midpoint():
+            midpoint = finger_midpoint_world_position()
+            if not banana_proxy_xform or midpoint is None:
+                return None
+            banana_position = banana_proxy_xform.ComputeLocalToWorldTransform(
+                Usd.TimeCode.Default()
+            ).ExtractTranslation()
+            return tuple(value - reference for value, reference in zip(banana_position, midpoint))
+
         # In headless smoke tests Kit may report not-running immediately after
         # a world reset.  An explicit finite test still advances the requested
         # physics frames and therefore exercises the native publisher node.
@@ -1027,6 +1095,25 @@ def main() -> int:
                 )
                 if target is not None else raw_arm_positions
             )
+            if (
+                args.startup_tracking and target is None and
+                world.current_time - last_startup_tracking_report >= STARTUP_TRACKING_REPORT_SEC
+            ):
+                print(
+                    "[bridge] startup tracking: actual=["
+                    + ", ".join(
+                        f"{name}={position:+.4f}"
+                        for name, position in zip(ARM_JOINTS, arm_positions)
+                    )
+                    + "] hold_error=["
+                    + ", ".join(
+                        f"{name}={goal - position:+.4f}"
+                        for name, goal, position in zip(ARM_JOINTS, startup_hold_positions, arm_positions)
+                    )
+                    + "]",
+                    flush=True,
+                )
+                last_startup_tracking_report = world.current_time
             unsafe = [
                 (name, position)
                 for name, position in zip(ARM_JOINTS, arm_positions)
@@ -1058,12 +1145,14 @@ def main() -> int:
                     )
                 )
                 if smoke_target is None and friction_support_active:
-                    tracking_bias = update_tracking_bias(
-                        target,
-                        arm_positions,
-                        tracking_bias,
-                        world.current_time - previous_sim_time,
-                    )
+                    if should_update_friction_bias(smoke_target, friction_bias_locked):
+                        tracking_bias = update_tracking_bias(
+                            target,
+                            arm_positions,
+                            tracking_bias,
+                            world.current_time - previous_sim_time,
+                            TRACKING_HOLD_COMPENSATION_GAIN,
+                        )
                     control_target = tuple(
                         max(arm_limits[name][0], min(arm_limits[name][1], goal + bias))
                         for name, goal, bias in zip(ARM_JOINTS, target, tracking_bias)
@@ -1071,6 +1160,18 @@ def main() -> int:
                 else:
                     tracking_bias = (0.0,) * len(ARM_JOINTS)
                     control_target = target
+                articulation.set_joint_position_targets(control_target, joint_indices=arm_indices)
+            else:
+                tracking_bias = update_tracking_bias(
+                    startup_hold_positions,
+                    arm_positions,
+                    tracking_bias,
+                    world.current_time - previous_sim_time,
+                )
+                control_target = tuple(
+                    max(arm_limits[name][0], min(arm_limits[name][1], goal + bias))
+                    for name, goal, bias in zip(ARM_JOINTS, startup_hold_positions, tracking_bias)
+                )
                 articulation.set_joint_position_targets(control_target, joint_indices=arm_indices)
             current_gripper_position = float(articulation.get_joint_positions()[0, master_index])
             gripper_target = gripper_ramp.step(
@@ -1174,6 +1275,32 @@ def main() -> int:
                     side: sensor.get_sensor_reading().value
                     for side, sensor in pressure_sensors.items()
                 }
+                try:
+                    j2_effort = float(
+                        articulation.get_measured_joint_efforts()[0, arm_indices[ARM_JOINTS.index("j2")]]
+                    )
+                except Exception:
+                    j2_effort = None
+                banana_relative_position = banana_relative_to_finger_midpoint()
+                banana_relative_delta = (
+                    tuple(
+                        value - reference
+                        for value, reference in zip(
+                            banana_relative_position, friction_hold_relative_position
+                        )
+                    )
+                    if banana_relative_position is not None and friction_hold_relative_position is not None
+                    else None
+                )
+                finger_midpoint = finger_midpoint_world_position()
+                finger_midpoint_delta = (
+                    tuple(
+                        value - reference
+                        for value, reference in zip(finger_midpoint, friction_hold_finger_midpoint)
+                    )
+                    if finger_midpoint is not None and friction_hold_finger_midpoint is not None
+                    else None
+                )
                 print(
                     "[bridge] lift tracking: "
                     f"remaining={remaining:.2f}s, error=["
@@ -1188,6 +1315,19 @@ def main() -> int:
                     )
                     + "] pressure=["
                     + ", ".join(f"{side}={force:.2f}N" for side, force in forces.items())
+                    + "] banana_relative=["
+                    + (", ".join(f"{value:+.4f}" for value in banana_relative_position)
+                       if banana_relative_position is not None else "unavailable")
+                    + "] banana_delta=["
+                    + (", ".join(f"{value:+.4f}" for value in banana_relative_delta)
+                       if banana_relative_delta is not None else "unavailable")
+                    + "] gripper_delta=["
+                    + (", ".join(f"{value:+.4f}" for value in finger_midpoint_delta)
+                       if finger_midpoint_delta is not None else "unavailable")
+                    + "] j2_effort="
+                    + (f"{j2_effort:+.1f}/{ARM_DRIVES['j2'][0]:.1f} "
+                       f"({abs(j2_effort) / ARM_DRIVES['j2'][0]:.0%})"
+                       if j2_effort is not None else "unavailable")
                     + "]",
                     flush=True,
                 )
@@ -1221,6 +1361,8 @@ def main() -> int:
                         friction_force_since = world.current_time
                     elif world.current_time - friction_force_since >= FRICTION_HOLD_SETTLE_SEC:
                         friction_hold_position = current_position
+                        friction_hold_relative_position = banana_relative_to_finger_midpoint()
+                        friction_hold_finger_midpoint = finger_midpoint_world_position()
                         gripper_ramp.target = friction_hold_position
                         gripper_ramp.commanded = friction_hold_position
                         max_force, stiffness, damping = GRIPPER_HOLD_DRIVE
@@ -1231,7 +1373,10 @@ def main() -> int:
                             "[bridge] friction hold: "
                             + ", ".join(f"{side}={force:.2f}N" for side, force in forces.items())
                             + f", position={current_position:.3f} rad, target={friction_hold_position:.3f} rad, "
-                            f"drive={GRIPPER_HOLD_DRIVE}",
+                            f"drive={GRIPPER_HOLD_DRIVE}, relative=["
+                            + (", ".join(f"{value:+.4f}" for value in friction_hold_relative_position)
+                               if friction_hold_relative_position is not None else "unavailable")
+                            + "]",
                             flush=True,
                         )
                 else:

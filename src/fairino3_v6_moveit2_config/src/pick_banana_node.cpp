@@ -236,6 +236,18 @@ bool execute_trajectory(
   return true;
 }
 
+void report_tcp_z_error(
+  const rclcpp::Node::SharedPtr & node,
+  moveit::planning_interface::MoveGroupInterface & arm,
+  const std::string & eef_link,
+  double target_z)
+{
+  const double actual_z = static_cast<double>(arm.getCurrentPose(eef_link).pose.position.z);
+  RCLCPP_INFO(
+    node->get_logger(), "Lift TCP z tracking: target=%.4f actual=%.4f error=%+.4f m",
+    target_z, actual_z, target_z - actual_z);
+}
+
 bool descend_eef_to_z(
   const rclcpp::Node::SharedPtr & node,
   moveit::planning_interface::MoveGroupInterface & arm,
@@ -463,7 +475,7 @@ int main(int argc, char ** argv)
   const int pre_gripper_close_pause_ms = declare_or_get_parameter<int>(node, "pre_gripper_close_pause_ms", 800);
   const int post_gripper_close_settle_ms = declare_or_get_parameter<int>(node, "post_gripper_close_settle_ms", 3000);
   const bool lift_after_close_enable = declare_or_get_parameter<bool>(node, "lift_after_close_enable", false);
-  const bool staged_lift_enable = declare_or_get_parameter<bool>(node, "staged_lift_enable", true);
+  const bool staged_lift_enable = declare_or_get_parameter<bool>(node, "staged_lift_enable", false);
   const double staged_lift_first_step = declare_or_get_parameter<double>(node, "staged_lift_first_step", 0.02);
   const int staged_lift_pause_ms = declare_or_get_parameter<int>(node, "staged_lift_pause_ms", 800);
 
@@ -1919,6 +1931,8 @@ int main(int argc, char ** argv)
         }
       }
 
+      report_tcp_z_error(
+        node, arm, eef_link, static_cast<double>(lift_pose_actual.position.z));
       publish_grasp_state("lifted", "lift_complete");
 
       if (execute_once) {
