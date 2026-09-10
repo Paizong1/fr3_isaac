@@ -27,6 +27,14 @@ SETTLE_SIM_TIME_SEC = 0.5
 MAX_COMMAND_SPEED_RAD_S = 0.03
 
 
+def retime_points(point_times, duration):
+    if len(point_times) < 2:
+        return [duration]
+    first_time = max(0.1, point_times[0])
+    motion_scale = (duration - first_time) / (point_times[-1] - point_times[0])
+    return [first_time + (point_time - point_times[0]) * motion_scale for point_time in point_times]
+
+
 class TrajectoryActionProxy:
     def __init__(self, action_name, trajectory_topic, state_topic):
         self.node = rclpy.create_node(
@@ -151,10 +159,12 @@ class TrajectoryActionProxy:
         base_duration = raw_duration + time_offset
         duration = max(base_duration, 1.0, max_delta / MAX_COMMAND_SPEED_RAD_S)
         wall_deadline = time.monotonic() + max(60.0, duration * 5.0 + 20.0)
-        scale = duration / base_duration
-        for point in wire_trajectory.points:
-            point_time = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
-            scaled_time_ns = round((point_time + time_offset) * scale * 1e9)
+        point_times = [
+            point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
+            for point in wire_trajectory.points
+        ]
+        for point, scaled_time in zip(wire_trajectory.points, retime_points(point_times, duration)):
+            scaled_time_ns = round(scaled_time * 1e9)
             point.time_from_start.sec, point.time_from_start.nanosec = divmod(scaled_time_ns, 1_000_000_000)
         with self._lock:
             start_sim_time = self._sim_time

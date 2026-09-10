@@ -24,10 +24,9 @@ GRIPPER_LIMIT_DEG = math.degrees(0.8)
 BILATERAL_CONTACT_DISTANCE_M = 0.065
 FRICTION_STATIC_FRICTION = 1.2
 FRICTION_DYNAMIC_FRICTION = 1.0
-FRICTION_HOLD_FORCE_N = 3.5
-FRICTION_HOLD_SETTLE_SEC = 0.03
+FRICTION_HOLD_FORCE_N = 5.0
 FRICTION_GRASP_SOLVER_POSITION_ITERATIONS = 16
-FRICTION_GRASP_SOLVER_VELOCITY_ITERATIONS = 4
+FRICTION_GRASP_SOLVER_VELOCITY_ITERATIONS = 16
 TRACKING_COMPENSATION_GAIN = 0.5
 TRACKING_HOLD_COMPENSATION_GAIN = 0.5
 TRACKING_COMPENSATION_LIMIT_RAD = 0.02
@@ -42,8 +41,8 @@ ARM_DRIVES = {
     # The shoulder links sagged by about 0.02 rad under gravity with the
     # original gains, exceeding FollowJointTrajectory's final tolerance.
     "j1": (250.0, 5_000.0, 400.0),
-    # j2 held a lower steady error here than with the stronger 40000 gain.
-    "j2": (1_000.0, 34_000.0, 1_600.0),
+    # Extra damping suppresses the measured lift-start vertical rebound.
+    "j2": (1_000.0, 34_000.0, 1_760.0),
     "j3": (250.0, 9_000.0, 550.0),
     "j4": (120.0, 7_000.0, 400.0),
     "j5": (300.0, 12_000.0, 750.0),
@@ -781,7 +780,7 @@ def main() -> int:
             banana_proxy_translate = ops[-1] if ops else banana_proxy_xform.AddTranslateOp()
         gripper_base_xform = None
         finger_tips = {}
-        if args.stable_grasp_demo or args.bilateral_grasp_demo:
+        if args.stable_grasp_demo or args.bilateral_grasp_demo or args.friction_grasp:
             gripper_base = next(
                 (prim for prim in stage.Traverse() if prim.GetName() == "robotiq_85_base_link"), None
             )
@@ -871,14 +870,20 @@ def main() -> int:
         executor = TrajectoryExecutor(arm_limits)
         gripper_ramp = GripperRamp()
         friction_hold_position = None
-        friction_force_since = None
         friction_hold_relative_position = None
         friction_hold_finger_midpoint = None
+        friction_hold_gripper_base = None
         friction_bias_locked = False
         last_friction_pressure_report = -float("inf")
         lift_tracking_until = -float("inf")
         last_lift_tracking_report = -float("inf")
         lift_tracking_active = False
+        lift_gripper_xy_min = [0.0, 0.0]
+        lift_gripper_xy_max = [0.0, 0.0]
+        lift_gripper_z_min = 0.0
+        lift_gripper_base_z_min = 0.0
+        lift_gripper_z_min_time = 0.0
+        lift_gripper_z_min_error = None
         bilateral_contacts = {"left": False, "right": False}
         bilateral_wait_reported = False
 
@@ -889,6 +894,9 @@ def main() -> int:
 
         def receive_trajectory(message) -> None:
             nonlocal friction_bias_locked, lift_tracking_active, lift_tracking_until, last_lift_tracking_report
+            nonlocal lift_gripper_xy_min, lift_gripper_xy_max
+            nonlocal lift_gripper_z_min, lift_gripper_z_min_time, lift_gripper_z_min_error
+            nonlocal lift_gripper_base_z_min
             try:
                 positions = articulation.get_joint_positions()
                 current_positions = (
@@ -929,6 +937,12 @@ def main() -> int:
                         friction_bias_locked = True
                         lift_tracking_active = True
                         last_lift_tracking_report = -float("inf")
+                        lift_gripper_xy_min = [0.0, 0.0]
+                        lift_gripper_xy_max = [0.0, 0.0]
+                        lift_gripper_z_min = 0.0
+                        lift_gripper_base_z_min = 0.0
+                        lift_gripper_z_min_time = 0.0
+                        lift_gripper_z_min_error = None
                     if lift_tracking_active:
                         lift_tracking_until = executor.start_time + executor.points[-1][0] + 0.5
                 elif lift_tracking_active:
@@ -948,7 +962,8 @@ def main() -> int:
             ),
         )
         def receive_gripper_target(message) -> None:
-            nonlocal friction_bias_locked, friction_hold_finger_midpoint, friction_hold_position, friction_force_since, friction_hold_relative_position
+            nonlocal friction_bias_locked, friction_hold_finger_midpoint, friction_hold_gripper_base
+            nonlocal friction_hold_position, friction_hold_relative_position
             target = float(message.data)
             if args.friction_grasp and friction_hold_position is not None and target >= friction_hold_position:
                 return
@@ -958,9 +973,9 @@ def main() -> int:
                 gripper_drive.CreateStiffnessAttr(stiffness).Set(stiffness)
                 gripper_drive.CreateDampingAttr(damping).Set(damping)
             friction_hold_position = None
-            friction_force_since = None
             friction_hold_relative_position = None
             friction_hold_finger_midpoint = None
+            friction_hold_gripper_base = None
             friction_bias_locked = False
             error = gripper_ramp.set_target(target)
             if error:
@@ -1043,6 +1058,15 @@ def main() -> int:
         )
         tracking_bias = (0.0,) * len(ARM_JOINTS)
         last_startup_tracking_report = -float("inf")
+
+        def gripper_base_world_position():
+            if not gripper_base_xform:
+                return None
+            return tuple(
+                gripper_base_xform.ComputeLocalToWorldTransform(
+                    Usd.TimeCode.Default()
+                ).ExtractTranslation()
+            )
 
         def finger_midpoint_world_position():
             if not finger_tips:
@@ -1264,6 +1288,38 @@ def main() -> int:
             # The ROS camera helper reads an off-screen render product; without
             # rendering it publishes valid rgb8 messages filled with black.
             world.step(render=True)
+            finger_midpoint = finger_midpoint_world_position() if lift_tracking_active else None
+            finger_midpoint_delta = (
+                tuple(
+                    value - reference
+                    for value, reference in zip(finger_midpoint, friction_hold_finger_midpoint)
+                )
+                if finger_midpoint is not None and friction_hold_finger_midpoint is not None
+                else None
+            )
+            gripper_base = gripper_base_world_position() if lift_tracking_active else None
+            gripper_base_delta = (
+                tuple(
+                    value - reference
+                    for value, reference in zip(gripper_base, friction_hold_gripper_base)
+                )
+                if gripper_base is not None and friction_hold_gripper_base is not None
+                else None
+            )
+            if gripper_base_delta is not None:
+                lift_gripper_base_z_min = min(lift_gripper_base_z_min, gripper_base_delta[2])
+            if finger_midpoint_delta is not None:
+                for axis in range(2):
+                    lift_gripper_xy_min[axis] = min(lift_gripper_xy_min[axis], finger_midpoint_delta[axis])
+                    lift_gripper_xy_max[axis] = max(lift_gripper_xy_max[axis], finger_midpoint_delta[axis])
+                if finger_midpoint_delta[2] < lift_gripper_z_min:
+                    lift_gripper_z_min = finger_midpoint_delta[2]
+                    lift_gripper_z_min_time = world.current_time - executor.start_time
+                    desired_at_min = executor.target_at(world.current_time)
+                    actual_at_min = articulation.get_joint_positions()[0, arm_indices]
+                    lift_gripper_z_min_error = tuple(
+                        desired - actual for desired, actual in zip(desired_at_min, actual_at_min)
+                    )
             if (
                 world.current_time <= lift_tracking_until and
                 world.current_time - last_lift_tracking_report >= LIFT_TRACKING_REPORT_SEC
@@ -1276,11 +1332,13 @@ def main() -> int:
                     for side, sensor in pressure_sensors.items()
                 }
                 try:
-                    j2_effort = float(
-                        articulation.get_measured_joint_efforts()[0, arm_indices[ARM_JOINTS.index("j2")]]
-                    )
+                    measured_efforts = articulation.get_measured_joint_efforts()[0]
+                    lift_efforts = {
+                        name: float(measured_efforts[arm_indices[ARM_JOINTS.index(name)]])
+                        for name in ("j2", "j3", "j4", "j5")
+                    }
                 except Exception:
-                    j2_effort = None
+                    lift_efforts = None
                 banana_relative_position = banana_relative_to_finger_midpoint()
                 banana_relative_delta = (
                     tuple(
@@ -1290,15 +1348,6 @@ def main() -> int:
                         )
                     )
                     if banana_relative_position is not None and friction_hold_relative_position is not None
-                    else None
-                )
-                finger_midpoint = finger_midpoint_world_position()
-                finger_midpoint_delta = (
-                    tuple(
-                        value - reference
-                        for value, reference in zip(finger_midpoint, friction_hold_finger_midpoint)
-                    )
-                    if finger_midpoint is not None and friction_hold_finger_midpoint is not None
                     else None
                 )
                 print(
@@ -1324,10 +1373,32 @@ def main() -> int:
                     + "] gripper_delta=["
                     + (", ".join(f"{value:+.4f}" for value in finger_midpoint_delta)
                        if finger_midpoint_delta is not None else "unavailable")
-                    + "] j2_effort="
-                    + (f"{j2_effort:+.1f}/{ARM_DRIVES['j2'][0]:.1f} "
-                       f"({abs(j2_effort) / ARM_DRIVES['j2'][0]:.0%})"
-                       if j2_effort is not None else "unavailable")
+                    + "] gripper_base_delta=["
+                    + (", ".join(f"{value:+.4f}" for value in gripper_base_delta)
+                       if gripper_base_delta is not None else "unavailable")
+                    + f"] gripper_base_z_min={lift_gripper_base_z_min:+.4f}"
+                    + " gripper_xy_peak=["
+                    + ", ".join(
+                        f"{axis}={max(abs(low), abs(high)):.4f}"
+                        for axis, low, high in zip("xy", lift_gripper_xy_min, lift_gripper_xy_max)
+                    )
+                    + "] gripper_xy_p2p=["
+                    + ", ".join(
+                        f"{axis}={high - low:.4f}"
+                        for axis, low, high in zip("xy", lift_gripper_xy_min, lift_gripper_xy_max)
+                    )
+                    + f"] gripper_z_min={lift_gripper_z_min:+.4f}@{lift_gripper_z_min_time:.3f}s"
+                    + " z_min_error=["
+                    + (", ".join(
+                        f"{name}={lift_gripper_z_min_error[ARM_JOINTS.index(name)]:+.4f}"
+                        for name in ("j2", "j3")
+                    ) if lift_gripper_z_min_error is not None else "unavailable")
+                    + "] effort=["
+                    + (", ".join(
+                        f"{name}={lift_efforts[name]:+.1f}/{ARM_DRIVES[name][0]:.1f} "
+                        f"({abs(lift_efforts[name]) / ARM_DRIVES[name][0]:.0%})"
+                        for name in ("j2", "j3", "j4", "j5")
+                    ) if lift_efforts is not None else "unavailable")
                     + "]",
                     flush=True,
                 )
@@ -1357,30 +1428,26 @@ def main() -> int:
                 current_position = float(articulation.get_joint_positions()[0, master_index])
                 closing = gripper_ramp.target > current_position + 0.001
                 if closing and all(force >= FRICTION_HOLD_FORCE_N for force in forces.values()):
-                    if friction_force_since is None:
-                        friction_force_since = world.current_time
-                    elif world.current_time - friction_force_since >= FRICTION_HOLD_SETTLE_SEC:
-                        friction_hold_position = current_position
-                        friction_hold_relative_position = banana_relative_to_finger_midpoint()
-                        friction_hold_finger_midpoint = finger_midpoint_world_position()
-                        gripper_ramp.target = friction_hold_position
-                        gripper_ramp.commanded = friction_hold_position
-                        max_force, stiffness, damping = GRIPPER_HOLD_DRIVE
-                        gripper_drive.CreateMaxForceAttr(max_force).Set(max_force)
-                        gripper_drive.CreateStiffnessAttr(stiffness).Set(stiffness)
-                        gripper_drive.CreateDampingAttr(damping).Set(damping)
-                        print(
-                            "[bridge] friction hold: "
-                            + ", ".join(f"{side}={force:.2f}N" for side, force in forces.items())
-                            + f", position={current_position:.3f} rad, target={friction_hold_position:.3f} rad, "
-                            f"drive={GRIPPER_HOLD_DRIVE}, relative=["
-                            + (", ".join(f"{value:+.4f}" for value in friction_hold_relative_position)
-                               if friction_hold_relative_position is not None else "unavailable")
-                            + "]",
-                            flush=True,
-                        )
-                else:
-                    friction_force_since = None
+                    friction_hold_position = current_position
+                    friction_hold_relative_position = banana_relative_to_finger_midpoint()
+                    friction_hold_finger_midpoint = finger_midpoint_world_position()
+                    friction_hold_gripper_base = gripper_base_world_position()
+                    gripper_ramp.target = friction_hold_position
+                    gripper_ramp.commanded = friction_hold_position
+                    max_force, stiffness, damping = GRIPPER_HOLD_DRIVE
+                    gripper_drive.CreateMaxForceAttr(max_force).Set(max_force)
+                    gripper_drive.CreateStiffnessAttr(stiffness).Set(stiffness)
+                    gripper_drive.CreateDampingAttr(damping).Set(damping)
+                    print(
+                        "[bridge] friction hold: "
+                        + ", ".join(f"{side}={force:.2f}N" for side, force in forces.items())
+                        + f", position={current_position:.3f} rad, target={friction_hold_position:.3f} rad, "
+                        f"drive={GRIPPER_HOLD_DRIVE}, relative=["
+                        + (", ".join(f"{value:+.4f}" for value in friction_hold_relative_position)
+                           if friction_hold_relative_position is not None else "unavailable")
+                        + "]",
+                        flush=True,
+                    )
             if banana_attached and banana_proxy_translate and gripper_base_xform:
                 gripper_position = gripper_base_xform.ComputeLocalToWorldTransform(
                     Usd.TimeCode.Default()
