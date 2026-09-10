@@ -19,7 +19,8 @@ GRIPPER_STATE_TOPIC = "/robotiq_gripper_controller/position_state"
 GRIPPER_MASTER_DRIVE = (20.0, 300.0, 50.0)
 GRIPPER_FRICTION_CLOSE_DRIVE = (8.0, 120.0, 80.0)
 GRIPPER_HOLD_DRIVE = (8.0, 100.0, 100.0)
-GRIPPER_MAX_VELOCITY_RAD_S = 0.1
+GRIPPER_MAX_VELOCITY_RAD_S = 0.18
+GRIPPER_COMMAND_VELOCITY_RAD_S = 0.12
 GRIPPER_LIMIT_DEG = math.degrees(0.8)
 BILATERAL_CONTACT_DISTANCE_M = 0.065
 FRICTION_STATIC_FRICTION = 1.2
@@ -274,9 +275,9 @@ def run_trajectory_self_test() -> None:
     assert queued.points[-1][1][1] == 2.0
     Message.joint_names = [*ARM_JOINTS[:-1], "robotiq_85_left_knuckle_joint"]
     assert executor.submit(Message(), 12.0, [0.0] * 6) is not None
-    gripper = GripperRamp()
+    gripper = GripperRamp(max_velocity=GRIPPER_COMMAND_VELOCITY_RAD_S)
     assert gripper.set_target(0.6) is None
-    assert math.isclose(gripper.step(0.0, 0.1), 0.01, abs_tol=1e-12)
+    assert math.isclose(gripper.step(0.0, 0.1), 0.012, abs_tol=1e-12)
     assert gripper.set_target(0.9) is not None
     assert math.isclose(closest_joint_angle(-4.109, -1.571, -3.1, 3.1), 2.174185307179586, abs_tol=1e-6)
     assert math.isclose(closest_joint_angle(27.753784, -1.552, -3.1, 3.1), 2.6210428, abs_tol=1e-5)
@@ -868,7 +869,7 @@ def main() -> int:
         from trajectory_msgs.msg import JointTrajectory
 
         executor = TrajectoryExecutor(arm_limits)
-        gripper_ramp = GripperRamp()
+        gripper_ramp = GripperRamp(max_velocity=GRIPPER_COMMAND_VELOCITY_RAD_S)
         friction_hold_position = None
         friction_hold_relative_position = None
         friction_hold_finger_midpoint = None

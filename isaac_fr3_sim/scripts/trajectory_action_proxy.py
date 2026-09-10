@@ -24,7 +24,6 @@ STATE_MAX_AGE_SEC = 5.0
 # aborting the subsequent TCP closed-loop correction.
 FINAL_TOLERANCE_RAD = 0.05
 SETTLE_SIM_TIME_SEC = 0.5
-MAX_COMMAND_SPEED_RAD_S = 0.03
 
 
 def retime_points(point_times, duration):
@@ -117,13 +116,11 @@ class TrajectoryActionProxy:
 
     def _execute(self, goal_handle):
         trajectory = goal_handle.request.trajectory
-        arm_current, state_error = self._fresh_arm_state()
+        _, state_error = self._fresh_arm_state()
         if state_error:
             print(f"[trajectory] aborted before forwarding: {state_error}", flush=True)
             goal_handle.abort()
             return self._result(FollowJointTrajectory.Result.INVALID_GOAL, state_error)
-        current_by_name = dict(zip(ARM_JOINTS, arm_current))
-        current = [current_by_name[name] for name in trajectory.joint_names]
         # Isaac's bridge validates and interpolates a complete trajectory.
         # Keep MoveIt's intermediate waypoints so Cartesian and collision-aware
         # planning is not replaced by one large direct joint-space move.
@@ -146,7 +143,6 @@ class TrajectoryActionProxy:
                 JointTrajectoryPoint(positions=list(point.positions), time_from_start=point.time_from_start)
             ]
         target = dict(zip(trajectory.joint_names, trajectory.points[-1].positions))
-        max_delta = max(abs(goal - actual) for goal, actual in zip(trajectory.points[-1].positions, current))
         raw_duration = (
             wire_trajectory.points[-1].time_from_start.sec
             + wire_trajectory.points[-1].time_from_start.nanosec * 1e-9
@@ -157,7 +153,7 @@ class TrajectoryActionProxy:
         )
         time_offset = max(0.1 - first_time, 0.0)
         base_duration = raw_duration + time_offset
-        duration = max(base_duration, 1.0, max_delta / MAX_COMMAND_SPEED_RAD_S)
+        duration = max(base_duration, 1.0)
         wall_deadline = time.monotonic() + max(60.0, duration * 5.0 + 20.0)
         point_times = [
             point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
@@ -185,7 +181,7 @@ class TrajectoryActionProxy:
         final_target = ", ".join(f"{name}={target[name]:.4f}" for name in trajectory.joint_names)
         print(
             f"[trajectory] queued continuous trajectory ({len(trajectory.points)} -> {len(wire_trajectory.points)}), "
-            f"max_delta={max_delta:.4f} rad, duration={duration:.3f}s sim-time, "
+            f"duration={duration:.3f}s sim-time, "
             f"final_target=[{final_target}]",
             flush=True,
         )
