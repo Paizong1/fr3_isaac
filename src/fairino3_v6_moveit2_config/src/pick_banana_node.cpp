@@ -442,7 +442,9 @@ int main(int argc, char ** argv)
   auto action_cb_group = node->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
   const std::string target_pose_topic =
-    declare_or_get_parameter<std::string>(node, "target_pose_topic", "/yolo/target_pose");
+    declare_or_get_parameter<std::string>(node, "target_pose_topic", "/yolo/global_target_pose");
+  const std::string refine_target_pose_topic =
+    declare_or_get_parameter<std::string>(node, "refine_target_pose_topic", "/yolo/target_pose");
   const std::string grasp_state_topic =
     declare_or_get_parameter<std::string>(node, "grasp_state_topic", "/world_model/grasp_state");
   const std::string target_object_id =
@@ -488,7 +490,7 @@ int main(int argc, char ** argv)
   const bool avoid_collisions = declare_or_get_parameter<bool>(node, "avoid_collisions", false);
   const bool descend_avoid_collisions =
     declare_or_get_parameter<bool>(node, "descend_avoid_collisions", false);
-  const double reach_grasp_tolerance = declare_or_get_parameter<double>(node, "reach_grasp_tolerance", 0.05);
+  const double reach_grasp_tolerance = declare_or_get_parameter<double>(node, "reach_grasp_tolerance", 0.003);
   const double vel_scale = declare_or_get_parameter<double>(node, "vel_scale", 0.3);
   const double acc_scale = declare_or_get_parameter<double>(node, "acc_scale", 0.3);
   const double lift_vel_scale = declare_or_get_parameter<double>(node, "lift_vel_scale", 0.05);
@@ -541,6 +543,8 @@ int main(int argc, char ** argv)
   const double target_pos_epsilon = declare_or_get_parameter<double>(node, "target_pos_epsilon", 0.01);
   const double retry_interval_sec = declare_or_get_parameter<double>(node, "retry_interval_sec", 1.0);
   const bool refine_at_pregrasp_enable = declare_or_get_parameter<bool>(node, "refine_at_pregrasp_enable", true);
+  const double refine_at_pregrasp_wait_sec =
+    declare_or_get_parameter<double>(node, "refine_at_pregrasp_wait_sec", 3.0);
   const bool refine_at_pregrasp_cartesian = declare_or_get_parameter<bool>(node, "refine_at_pregrasp_cartesian", true);
   const double refine_at_pregrasp_min_xy = declare_or_get_parameter<double>(node, "refine_at_pregrasp_min_xy", 0.004);
   const int closed_loop_max_iterations =
@@ -694,6 +698,12 @@ int main(int argc, char ** argv)
   geometry_msgs::msg::PoseStamped latest_target;
   bool have_target = false;
   std::chrono::steady_clock::time_point target_last_change_steady = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::time_point target_received_steady =
+    std::chrono::steady_clock::time_point::min();
+  geometry_msgs::msg::PoseStamped latest_refine_target;
+  bool have_refine_target = false;
+  std::chrono::steady_clock::time_point refine_target_received_steady =
+    std::chrono::steady_clock::time_point::min();
   std::atomic_bool executing{false};
   std::atomic_bool done{false};
   std::chrono::steady_clock::time_point last_attempt_steady = std::chrono::steady_clock::now();
@@ -716,8 +726,10 @@ int main(int argc, char ** argv)
     };
 
   rclcpp::SubscriptionOptions target_sub_opt;
-  target_sub_opt.callback_group = main_cb_group;
-  auto target_qos = rclcpp::QoS(1).reliable().transient_local();
+  target_sub_opt.callback_group = action_cb_group;
+  // A new pick attempt must wait for a live detection instead of replaying the
+  // transient publisher's cached pose from the previous attempt.
+  auto target_qos = rclcpp::QoS(1).reliable().durability_volatile();
   auto sub = node->create_subscription<geometry_msgs::msg::PoseStamped>(
     target_pose_topic, target_qos,
     [&](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
@@ -726,6 +738,7 @@ int main(int argc, char ** argv)
       if (!have_target) {
         latest_target = *msg;
         target_last_change_steady = now_steady;
+        target_received_steady = now_steady;
         have_target = true;
         return;
       }
@@ -740,6 +753,15 @@ int main(int argc, char ** argv)
         target_last_change_steady = now_steady;
       }
       latest_target = *msg;
+      target_received_steady = now_steady;
+    }, target_sub_opt);
+  auto refine_sub = node->create_subscription<geometry_msgs::msg::PoseStamped>(
+    refine_target_pose_topic, target_qos,
+    [&](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+      std::scoped_lock<std::mutex> lock(target_mutex);
+      latest_refine_target = *msg;
+      refine_target_received_steady = std::chrono::steady_clock::now();
+      have_refine_target = true;
     }, target_sub_opt);
 
   // FK is deliberately rebuilt from the received joint state instead of the
@@ -908,6 +930,7 @@ int main(int argc, char ** argv)
       target_copy = latest_target;
       target_change_time_copy = target_last_change_steady;
     }
+    geometry_msgs::msg::PoseStamped active_target = target_copy;
 
     const auto now_steady = std::chrono::steady_clock::now();
     const double settle_age = std::chrono::duration<double>(now_steady - target_change_time_copy).count();
@@ -1028,8 +1051,8 @@ int main(int argc, char ** argv)
 
       arm.setStartStateToCurrentState();
       arm.clearPoseTargets();
-      const double tx = static_cast<double>(target_in_planning.pose.position.x) + target_x_offset;
-      const double ty = static_cast<double>(target_in_planning.pose.position.y) + target_y_offset;
+      double tx = static_cast<double>(target_in_planning.pose.position.x) + target_x_offset;
+      double ty = static_cast<double>(target_in_planning.pose.position.y) + target_y_offset;
       double tz_obj = static_cast<double>(target_in_planning.pose.position.z);
       if (!std::isnan(target_z_override)) {
         tz_obj = target_z_override;
@@ -1335,6 +1358,98 @@ int main(int argc, char ** argv)
       pregrasp_state.update();
       geometry_msgs::msg::Pose pregrasp_pose =
         tf2::toMsg(pregrasp_state.getGlobalLinkTransform(eef_link));
+      bool pregrasp_executed = false;
+      if (refine_at_pregrasp_enable) {
+        if (!execute_plan(node, arm, to_pregrasp_plan)) {
+          finish_fail("pregrasp_execute_failed");
+          return;
+        }
+        pregrasp_executed = true;
+        arm.setStartStateToCurrentState();
+        pregrasp_pose = arm.getCurrentPose(eef_link).pose;
+
+        const auto refine_wait_started = std::chrono::steady_clock::now();
+        geometry_msgs::msg::PoseStamped current_global_target;
+        geometry_msgs::msg::PoseStamped refine_target;
+        bool have_fresh_global = false;
+        bool have_fresh_refine = false;
+        const auto refine_deadline = refine_wait_started + std::chrono::duration<double>(
+          std::max(0.0, refine_at_pregrasp_wait_sec));
+        while (std::chrono::steady_clock::now() < refine_deadline) {
+          {
+            std::scoped_lock<std::mutex> lock(target_mutex);
+            if (have_target && target_received_steady >= refine_wait_started) {
+              current_global_target = latest_target;
+              have_fresh_global = true;
+            }
+            if (have_refine_target && refine_target_received_steady >= refine_wait_started) {
+              refine_target = latest_refine_target;
+              have_fresh_refine = true;
+            }
+          }
+          if (have_fresh_global && have_fresh_refine) {
+            break;
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (!have_fresh_global || !have_fresh_refine) {
+          RCLCPP_ERROR(
+            node->get_logger(),
+            "Fresh pregrasp targets missing after %.1f s: global=%s wrist=%s; descent refused",
+            refine_at_pregrasp_wait_sec,
+            have_fresh_global ? "yes" : "no",
+            have_fresh_refine ? "yes" : "no");
+          finish_fail("fresh_pregrasp_targets_missing");
+          return;
+        }
+        const auto current_global_in_planning = transform_pose(
+          node, tf_buffer, current_global_target, planning_frame);
+        const auto refined_in_planning = transform_pose(node, tf_buffer, refine_target, planning_frame);
+        const double current_global_tx =
+          static_cast<double>(current_global_in_planning.pose.position.x) + target_x_offset;
+        const double current_global_ty =
+          static_cast<double>(current_global_in_planning.pose.position.y) + target_y_offset;
+        double current_global_tz = static_cast<double>(current_global_in_planning.pose.position.z);
+        if (!std::isnan(target_z_override)) {
+          current_global_tz = target_z_override;
+        }
+        current_global_tz += target_z_offset;
+        const double refined_tx = static_cast<double>(refined_in_planning.pose.position.x) + target_x_offset;
+        const double refined_ty = static_cast<double>(refined_in_planning.pose.position.y) + target_y_offset;
+        double refined_tz = static_cast<double>(refined_in_planning.pose.position.z);
+        if (!std::isnan(target_z_override)) {
+          refined_tz = target_z_override;
+        }
+        refined_tz += target_z_offset;
+        const double refine_dx = refined_tx - current_global_tx;
+        const double refine_dy = refined_ty - current_global_ty;
+        const double refine_dz = refined_tz - current_global_tz;
+        const double refine_delta = std::sqrt(
+          refine_dx * refine_dx + refine_dy * refine_dy + refine_dz * refine_dz);
+        RCLCPP_INFO(
+          node->get_logger(),
+          "Wrist refinement check: global_xyz=(%.3f %.3f %.3f) "
+          "wrist_xyz=(%.3f %.3f %.3f) delta=(%.3f %.3f %.3f) norm=%.3f",
+          current_global_tx, current_global_ty, current_global_tz, refined_tx, refined_ty, refined_tz,
+          refine_dx, refine_dy, refine_dz, refine_delta);
+        if (closed_loop_xyz_tolerance > 0.0 && std::fabs(refine_dz) > closed_loop_xyz_tolerance) {
+          RCLCPP_ERROR(
+            node->get_logger(),
+            "Wrist depth differs from global target by %.3f m (limit %.3f m); descent refused",
+            std::fabs(refine_dz), closed_loop_xyz_tolerance);
+          finish_fail("wrist_depth_disagrees_with_global");
+          return;
+        }
+        tx = current_global_tx;
+        ty = current_global_ty;
+        tz_obj = refined_tz;
+        active_target = current_global_in_planning;
+        active_target.pose.position.z = refined_in_planning.pose.position.z;
+        RCLCPP_INFO(
+          node->get_logger(),
+          "Camera fusion accepted: global_xy=(%.3f %.3f) wrist_z=%.3f",
+          tx, ty, tz_obj);
+      }
 
       if (pregrasp_orientation_enforce && !single_descend_enable && !inspect_after_pregrasp && !inspect_after_grasp) {
         tf2::Quaternion q_cur;
@@ -1404,11 +1519,7 @@ int main(int argc, char ** argv)
 
       auto inspect_geometry = [&](const geometry_msgs::msg::Pose & tcp_pose, const char * stage,
                                   const char * reason) {
-        geometry_msgs::msg::PoseStamped inspect_target;
-        {
-          std::scoped_lock<std::mutex> lock(target_mutex);
-          inspect_target = latest_target;
-        }
+        geometry_msgs::msg::PoseStamped inspect_target = active_target;
         inspect_target = transform_pose(node, tf_buffer, inspect_target, planning_frame);
         tf2::Transform tcp_tf;
         tf2::Transform target_tf;
@@ -1545,7 +1656,11 @@ int main(int argc, char ** argv)
       down_waypoints.push_back(grasp_pose);
 
       moveit_msgs::msg::RobotTrajectory down_traj;
-      arm.setStartState(pregrasp_state);
+      if (pregrasp_executed) {
+        arm.setStartStateToCurrentState();
+      } else {
+        arm.setStartState(pregrasp_state);
+      }
       const double down_fraction = arm.computeCartesianPath(
         {grasp_pose}, eef_step, 0.0, down_traj, descend_avoid_collisions);
       if (down_fraction < 1.0 - 1e-3) {
@@ -1558,6 +1673,13 @@ int main(int argc, char ** argv)
         RCLCPP_ERROR(node->get_logger(), "Down Cartesian fraction too low for merged trajectory: %.2f", down_fraction);
         finish_fail("merged_down_cartesian_incomplete");
         return;
+      } else if (pregrasp_executed) {
+        auto down_start_state = arm.getCurrentState(current_state_timeout);
+        if (!down_start_state || !execute_trajectory(
+              node, arm, robot_model, arm_group, *down_start_state, down_traj, vel_scale, acc_scale)) {
+          finish_fail("refined_down_execute_failed");
+          return;
+        }
       } else {
         moveit_msgs::msg::RobotTrajectory merged_traj = to_pregrasp_plan.trajectory_;
         auto & merged_joint_trajectory = merged_traj.joint_trajectory;
@@ -1961,6 +2083,7 @@ int main(int argc, char ** argv)
   (void)timer;
   (void)exit_timer;
   (void)sub;
+  (void)refine_sub;
   (void)joint_sub;
   return 0;
 }

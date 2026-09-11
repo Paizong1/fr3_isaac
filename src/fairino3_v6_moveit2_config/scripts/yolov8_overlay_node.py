@@ -9,6 +9,7 @@ from rclpy.duration import Duration
 from rclpy.qos import QoSHistoryPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import QoSReliabilityPolicy
+from rclpy.qos import DurabilityPolicy
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from sensor_msgs.msg import CameraInfo
@@ -120,13 +121,18 @@ class Yolov8OverlayNode(Node):
                 reliability=QoSReliabilityPolicy.RELIABLE,
             )
         self.pub = self.create_publisher(Image, image_out, pub_qos)
-        self.sub = self.create_subscription(Image, image_in, self._on_image, qos_profile_sensor_data)
+        camera_qos = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+        )
+        self.sub = self.create_subscription(Image, image_in, self._on_image, camera_qos)
         if self.publish_3d:
             self.depth_sub = self.create_subscription(
-                Image, self.depth_image_topic, self._on_depth, qos_profile_sensor_data
+                Image, self.depth_image_topic, self._on_depth, camera_qos
             )
             self.depth_info_sub = self.create_subscription(
-                CameraInfo, self.depth_info_topic, self._on_depth_info, qos_profile_sensor_data
+                CameraInfo, self.depth_info_topic, self._on_depth_info, camera_qos
             )
         self.det_pub = self.create_publisher(
             Detection2DArray,
@@ -138,7 +144,15 @@ class Yolov8OverlayNode(Node):
         if self.publish_3d:
             self.target_point_camera_pub = self.create_publisher(PointStamped, "/yolo/target_point_camera", 10)
             self.target_point_pub = self.create_publisher(PointStamped, "/yolo/target_point", 10)
-            self.target_pose_pub = self.create_publisher(PoseStamped, "/yolo/target_pose", 10)
+            target_pose_qos = QoSProfile(
+                history=QoSHistoryPolicy.KEEP_LAST,
+                depth=1,
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            )
+            self.target_pose_pub = self.create_publisher(
+                PoseStamped, "/yolo/target_pose", target_pose_qos
+            )
             self.det3d_pub = self.create_publisher(
                 Detection3DArray,
                 str(detections3d_out),
@@ -203,6 +217,7 @@ class Yolov8OverlayNode(Node):
 
     def _on_depth_info(self, msg: CameraInfo) -> None:
         self._latest_depth_info = msg
+        self._try_publish_synced_target()
 
     @staticmethod
     def _stamp_to_sec(stamp) -> float:
@@ -414,7 +429,8 @@ class Yolov8OverlayNode(Node):
         self._publish_grasp_state("localized", "depth_tf_fused", result.header)
         if not self._reported_first_3d:
             self.get_logger().info(
-                f"3D localization published: {detection.id} in {result.header.frame_id} on /yolo/detections_3d"
+                f"first 3D localization published: {detection.id} in {result.header.frame_id}; "
+                "subsequent target poses continue without repeated log messages"
             )
             self._reported_first_3d = True
 
@@ -539,15 +555,9 @@ class Yolov8OverlayNode(Node):
                     timeout=Duration(seconds=0.2),
                 )
             except Exception:
-                pose_cam = PoseStamped()
-                pose_cam.header = det_array.header
-                pose_cam.header.frame_id = camera_frame
-                pose_cam.pose.position.x = p_cam.point.x
-                pose_cam.pose.position.y = p_cam.point.y
-                pose_cam.pose.position.z = p_cam.point.z
-                pose_cam.pose.orientation.w = 1.0
-                self._publish_target_pose(pose_cam)
-                self._publish_3d_detection(det_array.header, pose_cam, det, dimensions)
+                self._report_3d_wait_once(
+                    f"TF unavailable: {self.target_frame} <- {camera_frame}"
+                )
                 return
 
         rot = tf.transform.rotation

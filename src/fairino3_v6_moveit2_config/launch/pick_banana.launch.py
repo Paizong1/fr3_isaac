@@ -17,7 +17,10 @@ def generate_launch_description():
     use_sim_time_arg = DeclareLaunchArgument("use_sim_time", default_value="true")
     start_move_group_arg = DeclareLaunchArgument("start_move_group", default_value="true")
 
-    target_pose_topic_arg = DeclareLaunchArgument("target_pose_topic", default_value="/yolo/target_pose")
+    target_pose_topic_arg = DeclareLaunchArgument("target_pose_topic", default_value="/yolo/global_target_pose")
+    refine_target_pose_topic_arg = DeclareLaunchArgument(
+        "refine_target_pose_topic", default_value="/yolo/target_pose"
+    )
     grasp_state_topic_arg = DeclareLaunchArgument("grasp_state_topic", default_value="/world_model/grasp_state")
     target_object_id_arg = DeclareLaunchArgument("target_object_id", default_value="banana-1")
     execute_once_arg = DeclareLaunchArgument("execute_once", default_value="true")
@@ -31,6 +34,7 @@ def generate_launch_description():
     best_plan_metric_arg = DeclareLaunchArgument("best_plan_metric", default_value="joint_l1")
 
     refine_at_pregrasp_enable_arg = DeclareLaunchArgument("refine_at_pregrasp_enable", default_value="true")
+    refine_at_pregrasp_wait_sec_arg = DeclareLaunchArgument("refine_at_pregrasp_wait_sec", default_value="3.0")
     refine_at_pregrasp_cartesian_arg = DeclareLaunchArgument("refine_at_pregrasp_cartesian", default_value="true")
     refine_at_pregrasp_min_xy_arg = DeclareLaunchArgument("refine_at_pregrasp_min_xy", default_value="0.004")
     closed_loop_max_iterations_arg = DeclareLaunchArgument("closed_loop_max_iterations", default_value="5")
@@ -71,7 +75,7 @@ def generate_launch_description():
     min_eef_z_arg = DeclareLaunchArgument("min_eef_z", default_value="-0.08")
     descend_below_target_arg = DeclareLaunchArgument("descend_below_target", default_value="0.0")
     descend_avoid_collisions_arg = DeclareLaunchArgument("descend_avoid_collisions", default_value="false")
-    reach_grasp_tolerance_arg = DeclareLaunchArgument("reach_grasp_tolerance", default_value="0.05")
+    reach_grasp_tolerance_arg = DeclareLaunchArgument("reach_grasp_tolerance", default_value="0.003")
     single_descend_enable_arg = DeclareLaunchArgument("single_descend_enable", default_value="false")
     single_descend_close_gripper_arg = DeclareLaunchArgument(
         "single_descend_close_gripper", default_value="false"
@@ -182,6 +186,7 @@ def generate_launch_description():
             {
                 "use_sim_time": use_sim_time,
                 "target_pose_topic": LaunchConfiguration("target_pose_topic"),
+                "refine_target_pose_topic": LaunchConfiguration("refine_target_pose_topic"),
                 "grasp_state_topic": LaunchConfiguration("grasp_state_topic"),
                 "target_object_id": LaunchConfiguration("target_object_id"),
                 "execute_once": LaunchConfiguration("execute_once"),
@@ -193,6 +198,7 @@ def generate_launch_description():
                 "best_of_time_budget_sec": LaunchConfiguration("best_of_time_budget_sec"),
                 "best_plan_metric": LaunchConfiguration("best_plan_metric"),
                 "refine_at_pregrasp_enable": LaunchConfiguration("refine_at_pregrasp_enable"),
+                "refine_at_pregrasp_wait_sec": LaunchConfiguration("refine_at_pregrasp_wait_sec"),
                 "refine_at_pregrasp_cartesian": LaunchConfiguration("refine_at_pregrasp_cartesian"),
                 "refine_at_pregrasp_min_xy": LaunchConfiguration("refine_at_pregrasp_min_xy"),
                 "closed_loop_max_iterations": LaunchConfiguration("closed_loop_max_iterations"),
@@ -277,6 +283,7 @@ def generate_launch_description():
             use_sim_time_arg,
             start_move_group_arg,
             target_pose_topic_arg,
+            refine_target_pose_topic_arg,
             grasp_state_topic_arg,
             target_object_id_arg,
             execute_once_arg,
@@ -288,6 +295,7 @@ def generate_launch_description():
             best_of_time_budget_sec_arg,
             best_plan_metric_arg,
             refine_at_pregrasp_enable_arg,
+            refine_at_pregrasp_wait_sec_arg,
             refine_at_pregrasp_cartesian_arg,
             refine_at_pregrasp_min_xy_arg,
             closed_loop_max_iterations_arg,

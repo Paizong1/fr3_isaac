@@ -17,8 +17,8 @@ GRIPPER_MASTER_JOINT = "robotiq_85_left_knuckle_joint"
 GRIPPER_COMMAND_TOPIC = "/robotiq_gripper_controller/position_command"
 GRIPPER_STATE_TOPIC = "/robotiq_gripper_controller/position_state"
 GRIPPER_MASTER_DRIVE = (20.0, 300.0, 50.0)
-GRIPPER_FRICTION_CLOSE_DRIVE = (8.0, 120.0, 80.0)
-GRIPPER_HOLD_DRIVE = (8.0, 100.0, 100.0)
+GRIPPER_FRICTION_CLOSE_DRIVE = (10.0, 120.0, 80.0)
+GRIPPER_HOLD_DRIVE = (10.0, 100.0, 100.0)
 GRIPPER_MAX_VELOCITY_RAD_S = 0.18
 GRIPPER_COMMAND_VELOCITY_RAD_S = 0.12
 GRIPPER_LIMIT_DEG = math.degrees(0.8)
@@ -358,6 +358,15 @@ def configure_position_drives(stage) -> None:
 
 
 BANANA_CALIBRATION_POSITION = (-0.13779715872850662, -0.5833656024637526, 0.025)
+BANANA_CONTACT_RADIUS_M = 0.025
+# Convert the wrist RGB-D surface point to the grasp reference expected by
+# pick_banana_node, calibrated at the 0.12 m pregrasp working height.
+BANANA_GRASP_REFERENCE_OFFSET_BASE = (0.0049, -0.0083, 0.0093)
+GLOBAL_CAMERA_POSITION = (0.45, -0.10, 1.10)
+GLOBAL_CAMERA_LOOK_AT = (-0.14, -0.58, 0.03)
+GLOBAL_CAMERA_RESOLUTION = (320, 240)
+GLOBAL_CAMERA_TICK_RATE = 2.0
+GLOBAL_GRASP_REFERENCE_OFFSET_BASE = (-0.0143, -0.0049, 0.0080)
 
 
 def configure_scene_collisions(
@@ -406,7 +415,7 @@ def configure_scene_collisions(
                 raise RuntimeError("Banana prim not found for contact proxy")
             proxy = UsdGeom.Capsule.Define(stage, "/World/BananaContactProxy")
             proxy.CreateAxisAttr(UsdGeom.Tokens.x)
-            proxy.CreateRadiusAttr(0.025)
+            proxy.CreateRadiusAttr(BANANA_CONTACT_RADIUS_M)
             proxy.CreateHeightAttr(0.12)
             proxy.AddTranslateOp().Set(Gf.Vec3d(*BANANA_CALIBRATION_POSITION))
             UsdGeom.Imageable(proxy.GetPrim()).CreateVisibilityAttr().Set(UsdGeom.Tokens.invisible)
@@ -549,7 +558,7 @@ def main() -> int:
     parser.add_argument(
         "--rgb-from-active-viewport",
         action="store_true",
-        help="Publish RGB from the visible Isaac viewport render product (requires windowed mode).",
+        help="Localize the yellow target from a dedicated Isaac viewport (requires windowed mode).",
     )
     parser.add_argument("--domain-id", type=int, default=None)
     parser.add_argument("--test-frames", type=int, default=0)
@@ -603,6 +612,7 @@ def main() -> int:
         parser.error("--domain-id must be between 0 and 232")
     os.environ["ROS_DOMAIN_ID"] = str(ros_domain_id)
     os.environ.setdefault("ROS_LOCALHOST_ONLY", "0")
+    os.environ.setdefault("RMW_FASTRTPS_PUBLICATION_MODE", "ASYNCHRONOUS")
 
     from isaacsim import SimulationApp
 
@@ -650,6 +660,32 @@ def main() -> int:
         camera_prim = camera.GetPrim()
         camera_prim.ApplyAPI("OmniSensorAPI")
         camera_prim.GetAttribute("omni:sensor:tickRate").Set(args.camera_tick_rate)
+        focal_length = float(camera.GetFocalLengthAttr().Get())
+        horizontal_aperture = float(camera.GetHorizontalApertureAttr().Get())
+        if focal_length <= 0.0 or horizontal_aperture <= 0.0:
+            raise RuntimeError("wrist camera focal length and horizontal aperture must be positive")
+        vertical_aperture = horizontal_aperture * args.camera_height / args.camera_width
+        camera.GetVerticalApertureAttr().Set(vertical_aperture)
+        global_camera_path = "/World/GlobalLocalizationCamera"
+        global_camera = UsdGeom.Camera.Define(stage, global_camera_path)
+        global_camera.GetFocalLengthAttr().Set(18.0)
+        global_camera.GetHorizontalApertureAttr().Set(36.0)
+        global_camera.GetVerticalApertureAttr().Set(27.0)
+        global_camera_matrix = Gf.Matrix4d(1.0).SetLookAt(
+            Gf.Vec3d(*GLOBAL_CAMERA_POSITION),
+            Gf.Vec3d(*GLOBAL_CAMERA_LOOK_AT),
+            Gf.Vec3d(0.0, 0.0, 1.0),
+        ).GetInverse()
+        UsdGeom.Xformable(global_camera.GetPrim()).AddTransformOp().Set(
+            global_camera_matrix
+        )
+        print(
+            "[bridge] camera profile: "
+            f"{args.camera_width}x{args.camera_height}@{args.camera_tick_rate:g}Hz, "
+            f"shadows={'on' if args.keep_light_shadows else 'off'}, "
+            f"focal={focal_length:.4f}, aperture=({horizontal_aperture:.4f}, {vertical_aperture:.4f})",
+            flush=True,
+        )
 
         from usdrt import Sdf as UsdrtSdf
 
@@ -711,16 +747,18 @@ def main() -> int:
                     ("ComputeTransformTree.outputs:childFrames", "PublishTransformTree.inputs:childFrames"),
                     ("ComputeTransformTree.outputs:translations", "PublishTransformTree.inputs:translations"),
                     ("ComputeTransformTree.outputs:orientations", "PublishTransformTree.inputs:orientations"),
-                    ("OnPlaybackTick.outputs:tick", "CreateCameraRenderProduct.inputs:execIn"),
-                    ("CreateCameraRenderProduct.outputs:execOut", "PublishRgb.inputs:execIn"),
-                    ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishRgb.inputs:renderProductPath"),
-                    ("CreateCameraRenderProduct.outputs:execOut", "PublishDepth.inputs:execIn"),
-                    ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishDepth.inputs:renderProductPath"),
-                    ("CreateCameraRenderProduct.outputs:execOut", "PublishCameraInfo.inputs:execIn"),
-                    ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishCameraInfo.inputs:renderProductPath"),
-                    ("SensorDataQoS.outputs:qosProfile", "PublishRgb.inputs:qosProfile"),
-                    ("SensorDataQoS.outputs:qosProfile", "PublishDepth.inputs:qosProfile"),
-                    ("SensorDataQoS.outputs:qosProfile", "PublishCameraInfo.inputs:qosProfile"),
+                    *([] if args.rgb_from_active_viewport else [
+                        ("OnPlaybackTick.outputs:tick", "CreateCameraRenderProduct.inputs:execIn"),
+                        ("CreateCameraRenderProduct.outputs:execOut", "PublishRgb.inputs:execIn"),
+                        ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishRgb.inputs:renderProductPath"),
+                        ("CreateCameraRenderProduct.outputs:execOut", "PublishDepth.inputs:execIn"),
+                        ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishDepth.inputs:renderProductPath"),
+                        ("CreateCameraRenderProduct.outputs:execOut", "PublishCameraInfo.inputs:execIn"),
+                        ("CreateCameraRenderProduct.outputs:renderProductPath", "PublishCameraInfo.inputs:renderProductPath"),
+                        ("SensorDataQoS.outputs:qosProfile", "PublishRgb.inputs:qosProfile"),
+                        ("SensorDataQoS.outputs:qosProfile", "PublishDepth.inputs:qosProfile"),
+                        ("SensorDataQoS.outputs:qosProfile", "PublishCameraInfo.inputs:qosProfile"),
+                    ]),
                 ],
             },
         )
@@ -747,6 +785,8 @@ def main() -> int:
         og.Controller.evaluate_sync(graph)
         print("[bridge] native ROS 2 joint-state graph created: /ROS_FR3", flush=True)
         print("[bridge] native clock publisher ready: /clock", flush=True)
+        if args.rgb_from_active_viewport:
+            print("[bridge] disabled unused off-screen camera graph", flush=True)
 
         from isaacsim.core.api import World
         from isaacsim.core.prims import Articulation
@@ -862,9 +902,9 @@ def main() -> int:
 
         import rclpy
         from rclpy.executors import SingleThreadedExecutor
+        from geometry_msgs.msg import PoseStamped
         from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-        from rclpy.qos import qos_profile_sensor_data
-        from sensor_msgs.msg import CameraInfo, Image, JointState
+        from sensor_msgs.msg import JointState
         from std_msgs.msg import Float64
         from trajectory_msgs.msg import JointTrajectory
 
@@ -985,14 +1025,17 @@ def main() -> int:
         gripper_node.create_subscription(Float64, GRIPPER_COMMAND_TOPIC, receive_gripper_target, 1)
         gripper_state_publisher = gripper_node.create_publisher(Float64, GRIPPER_STATE_TOPIC, 10)
         joint_state_publisher = trajectory_node.create_publisher(JointState, "/joint_states", 10)
-        direct_rgb_publisher = trajectory_node.create_publisher(
-            Image, "/wrist_camera/image_raw_direct", qos_profile_sensor_data
+        target_pose_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
-        direct_depth_publisher = trajectory_node.create_publisher(
-            Image, "/wrist_camera/depth/image_raw_direct", qos_profile_sensor_data
+        target_pose_publisher = trajectory_node.create_publisher(
+            PoseStamped, "/yolo/target_pose", target_pose_qos
         )
-        direct_depth_info_publisher = trajectory_node.create_publisher(
-            CameraInfo, "/wrist_camera/depth/camera_info_direct", qos_profile_sensor_data
+        global_target_pose_publisher = trajectory_node.create_publisher(
+            PoseStamped, "/yolo/global_target_pose", target_pose_qos
         )
         ros_executor = SingleThreadedExecutor()
         ros_executor.add_node(trajectory_node)
@@ -1015,6 +1058,10 @@ def main() -> int:
         timeline.play()
         viewport_rgb_annotator = None
         viewport_depth_annotator = None
+        camera_viewport_window = None
+        global_rgb_annotator = None
+        global_depth_annotator = None
+        global_camera_viewport_window = None
         if args.rgb_from_active_viewport:
             if args.headless:
                 raise RuntimeError(
@@ -1023,18 +1070,21 @@ def main() -> int:
             # The GUI viewport is demonstrably rendering the banana correctly.
             # Reuse that exact render product instead of creating an off-screen
             # product, which is black in this Isaac/WSL configuration.
-            from omni.kit.viewport.utility import get_active_viewport
+            from isaacsim.core.rendering_manager import ViewportManager
+            import cv2
             import omni.replicator.core as rep
             import numpy as np
 
             simulation_app.update()
-            viewport = get_active_viewport()
-            if viewport is None:
-                raise RuntimeError("Isaac active viewport is unavailable for RGB detection.")
-            viewport.camera_path = camera_path
+            camera_viewport_window = ViewportManager.create_viewport_window(
+                camera=camera_path,
+                title="Wrist Camera",
+                resolution=(args.camera_width, args.camera_height),
+            )
+            viewport = camera_viewport_window.viewport_api
             viewport.set_texture_resolution([args.camera_width, args.camera_height])
             simulation_app.update()
-            # Attach directly to the render product displayed by the GUI.
+            # Use a dedicated viewport so the main observer camera remains untouched.
             # Camera.get_rgba() cannot read this Hydra texture reliably in 6.0.1.
             viewport_rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
             viewport_rgb_annotator.attach(viewport.get_render_product_path())
@@ -1042,18 +1092,102 @@ def main() -> int:
                 "distance_to_image_plane"
             )
             viewport_depth_annotator.attach(viewport.get_render_product_path())
+            global_camera_viewport_window = ViewportManager.create_viewport_window(
+                camera=global_camera_path,
+                title="Global Localization Camera",
+                resolution=GLOBAL_CAMERA_RESOLUTION,
+            )
+            global_viewport = global_camera_viewport_window.viewport_api
+            global_viewport.set_texture_resolution(list(GLOBAL_CAMERA_RESOLUTION))
+            simulation_app.update()
+            global_rgb_annotator = rep.AnnotatorRegistry.get_annotator("rgb")
+            global_rgb_annotator.attach(global_viewport.get_render_product_path())
+            global_depth_annotator = rep.AnnotatorRegistry.get_annotator(
+                "distance_to_image_plane"
+            )
+            global_depth_annotator.attach(global_viewport.get_render_product_path())
+            camera_xform = UsdGeom.Xformable(camera_prim)
+            global_camera_xform = UsdGeom.Xformable(global_camera.GetPrim())
+            base_link_xform = UsdGeom.Xformable(stage.GetPrimAtPath(articulation_root_path))
             print(
-                "[bridge] GUI viewport RGB-D publishers ready: "
-                "/wrist_camera/image_raw_direct, /wrist_camera/depth/image_raw_direct",
+                "[bridge] Windows RGB-D localization ready: "
+                "/yolo/global_target_pose (global), /yolo/target_pose (wrist)",
                 flush=True,
             )
+
+        def localize_yellow_target(rgb, depth, min_area_ratio=120.0 / (320.0 * 240.0)):
+            hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+            mask = cv2.inRange(hsv, (18, 80, 80), (40, 255, 255))
+            mask = cv2.morphologyEx(
+                mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            )
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                return None
+            contour = max(contours, key=cv2.contourArea)
+            min_area = max(20.0, min_area_ratio * rgb.shape[0] * rgb.shape[1])
+            if cv2.contourArea(contour) < min_area:
+                return None
+            x, y, width, height = cv2.boundingRect(contour)
+            u = min(depth.shape[1] - 1, max(0, int(round(x + width / 2.0))))
+            v = min(depth.shape[0] - 1, max(0, int(round(y + height / 2.0))))
+            z = float(depth[v, u])
+            if not math.isfinite(z) or z < 0.05 or z > 5.0:
+                patch = depth[max(0, v - 2):v + 3, max(0, u - 2):u + 3]
+                valid = patch[np.isfinite(patch) & (patch >= 0.05) & (patch <= 5.0)]
+                if not valid.size:
+                    return None
+                z = float(np.median(valid))
+            return u, v, z
+
+        def project_target_to_base(
+            rgb, depth, source_xform, focal, aperture_x, aperture_y, offset,
+            min_area_ratio=120.0 / (320.0 * 240.0),
+        ):
+            target = localize_yellow_target(rgb, depth, min_area_ratio)
+            if target is None:
+                return None
+            u, v, surface_depth = target
+            fx = rgb.shape[1] * focal / aperture_x
+            fy = rgb.shape[0] * focal / aperture_y
+            x = (u - rgb.shape[1] / 2.0) / fx * surface_depth
+            y = (v - rgb.shape[0] / 2.0) / fy * surface_depth
+            point_world = source_xform.ComputeLocalToWorldTransform(
+                Usd.TimeCode.Default()
+            ).Transform(Gf.Vec3d(x, -y, -surface_depth))
+            surface_point_base = base_link_xform.ComputeLocalToWorldTransform(
+                Usd.TimeCode.Default()
+            ).GetInverse().Transform(point_world)
+            point_base = Gf.Vec3d(
+                surface_point_base[0] + offset[0],
+                surface_point_base[1] + offset[1],
+                surface_point_base[2] + offset[2],
+            )
+            return u, v, surface_depth, surface_point_base, point_base
+
+        def publish_target_pose(publisher, point_base):
+            pose = PoseStamped()
+            pose.header.stamp.sec = int(world.current_time)
+            pose.header.stamp.nanosec = int((world.current_time % 1.0) * 1_000_000_000)
+            pose.header.frame_id = "base_link"
+            pose.pose.position.x = float(point_base[0])
+            pose.pose.position.y = float(point_base[1])
+            pose.pose.position.z = float(point_base[2])
+            pose.pose.orientation.w = 1.0
+            publisher.publish(pose)
+
         frames = 0
         previous_sim_time = world.current_time
         last_direct_rgb_time = -float("inf")
+        last_global_rgb_time = -float("inf")
         camera_debug = os.environ.get("FR3_CAMERA_DEBUG") == "1"
         last_camera_heartbeat = time.monotonic()
         direct_rgb_frames = 0
         direct_rgb_status = "not_attempted"
+        first_target_pose_published = False
+        first_global_target_pose_published = False
+        global_capture_attempts = 0
+        global_diagnostic_printed = False
         last_safe_arm_positions = tuple(
             float(position) for position in articulation.get_joint_positions()[0, arm_indices]
         )
@@ -1461,57 +1595,121 @@ def main() -> int:
                 banana_visual_orient.Set(
                     Gf.Quatf(float(rotation.GetReal()), Gf.Vec3f(*rotation.GetImaginary()))
                 )
-            simulation_app.update()
             if (
                 viewport_rgb_annotator is not None
                 and viewport_depth_annotator is not None
                 and world.current_time - last_direct_rgb_time >= 1.0 / max(0.1, args.camera_tick_rate)
             ):
+                camera_read_started = time.monotonic()
                 rgba = viewport_rgb_annotator.get_data()
+                rgb_read_finished = time.monotonic()
                 depth = viewport_depth_annotator.get_data()
+                depth_read_finished = time.monotonic()
                 if rgba is not None and rgba.size and depth is not None and depth.size:
                     direct_rgb_status = f"{rgba.shape}/{rgba.dtype}"
                     rgb = rgba[:, :, :3]
                     if rgb.dtype != np.uint8:
                         rgb = np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
-                    image = Image()
-                    image.header.stamp.sec = int(world.current_time)
-                    image.header.stamp.nanosec = int(
-                        (world.current_time % 1.0) * 1_000_000_000
-                    )
-                    image.header.frame_id = "wrist_camera"
-                    image.height, image.width = rgb.shape[:2]
-                    image.encoding = "rgb8"
-                    image.is_bigendian = 0
-                    image.step = image.width * 3
-                    image.data = rgb.tobytes()
-                    direct_rgb_publisher.publish(image)
                     depth = np.asarray(depth, dtype=np.float32).squeeze()
-                    depth_image = Image()
-                    depth_image.header = image.header
-                    depth_image.height, depth_image.width = depth.shape[:2]
-                    depth_image.encoding = "32FC1"
-                    depth_image.is_bigendian = 0
-                    depth_image.step = depth_image.width * 4
-                    depth_image.data = depth.tobytes()
-                    direct_depth_publisher.publish(depth_image)
-                    depth_info = CameraInfo()
-                    depth_info.header = image.header
-                    depth_info.height = image.height
-                    depth_info.width = image.width
-                    fx = args.camera_width * (2.0 / 3.0)
-                    fy = args.camera_height * (8.0 / 9.0)
-                    cx = args.camera_width / 2.0
-                    cy = args.camera_height / 2.0
-                    depth_info.k = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-                    depth_info.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
-                    depth_info.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-                    depth_info.distortion_model = "plumb_bob"
-                    direct_depth_info_publisher.publish(depth_info)
+                    target = project_target_to_base(
+                        rgb,
+                        depth,
+                        camera_xform,
+                        focal_length,
+                        horizontal_aperture,
+                        vertical_aperture,
+                        BANANA_GRASP_REFERENCE_OFFSET_BASE,
+                    )
+                    if target is not None:
+                        u, v, surface_depth, surface_point_base, point_base = target
+                        publish_target_pose(target_pose_publisher, point_base)
+                        direct_rgb_status = (
+                            f"localized@({u},{v}) surface={surface_depth:.3f}m "
+                            "calibrated_grasp_reference"
+                        )
+                        if not first_target_pose_published:
+                            print(
+                                "[bridge] first Windows RGB-D target pose: "
+                                f"surface=({surface_point_base[0]:.3f}, "
+                                f"{surface_point_base[1]:.3f}, {surface_point_base[2]:.3f}) "
+                                f"grasp_reference=({point_base[0]:.3f}, {point_base[1]:.3f}, "
+                                f"{point_base[2]:.3f})",
+                                flush=True,
+                            )
+                            first_target_pose_published = True
+                    else:
+                        direct_rgb_status = "no_yellow_target_or_depth"
                     last_direct_rgb_time = world.current_time
                     direct_rgb_frames += 1
+                    capture_finished = time.monotonic()
+                    camera_read_sec = capture_finished - camera_read_started
+                    if camera_read_sec >= 0.1:
+                        print(
+                            "[bridge] slow camera capture: "
+                            f"rgb_read={(rgb_read_finished - camera_read_started) * 1000:.1f}ms, "
+                            f"depth_read={(depth_read_finished - rgb_read_finished) * 1000:.1f}ms, "
+                            f"localize={(capture_finished - depth_read_finished) * 1000:.1f}ms",
+                            flush=True,
+                        )
                 else:
                     direct_rgb_status = "empty"
+            if (
+                global_rgb_annotator is not None
+                and global_depth_annotator is not None
+                and world.current_time - last_global_rgb_time >= 1.0 / GLOBAL_CAMERA_TICK_RATE
+            ):
+                global_capture_attempts += 1
+                global_rgba = global_rgb_annotator.get_data()
+                global_depth = global_depth_annotator.get_data()
+                if (
+                    global_rgba is not None
+                    and global_rgba.size
+                    and global_depth is not None
+                    and global_depth.size
+                ):
+                    global_rgb = global_rgba[:, :, :3]
+                    if global_rgb.dtype != np.uint8:
+                        global_rgb = np.clip(global_rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+                    global_depth = np.asarray(global_depth, dtype=np.float32).squeeze()
+                    global_target = project_target_to_base(
+                        global_rgb,
+                        global_depth,
+                        global_camera_xform,
+                        18.0,
+                        36.0,
+                        27.0,
+                        GLOBAL_GRASP_REFERENCE_OFFSET_BASE,
+                        0.0002,
+                    )
+                    if global_target is not None:
+                        _, _, _, global_surface, global_point = global_target
+                        publish_target_pose(global_target_pose_publisher, global_point)
+                        if not first_global_target_pose_published:
+                            print(
+                                "[bridge] first global RGB-D target pose: "
+                                f"surface=({global_surface[0]:.3f}, {global_surface[1]:.3f}, "
+                                f"{global_surface[2]:.3f}) grasp_reference=({global_point[0]:.3f}, "
+                                f"{global_point[1]:.3f}, {global_point[2]:.3f})",
+                                flush=True,
+                            )
+                            first_global_target_pose_published = True
+                    elif global_capture_attempts >= 5 and not global_diagnostic_printed:
+                        global_hsv = cv2.cvtColor(global_rgb, cv2.COLOR_RGB2HSV)
+                        global_yellow = cv2.inRange(global_hsv, (18, 80, 80), (40, 255, 255))
+                        valid_global_depth = global_depth[
+                            np.isfinite(global_depth) & (global_depth >= 0.05) & (global_depth <= 5.0)
+                        ]
+                        print(
+                            "[bridge] global camera sees no target: "
+                            f"rgb_shape={global_rgb.shape} yellow_pixels={np.count_nonzero(global_yellow)} "
+                            f"valid_depth_pixels={valid_global_depth.size}",
+                            flush=True,
+                        )
+                        global_diagnostic_printed = True
+                elif global_capture_attempts >= 5 and not global_diagnostic_printed:
+                    print("[bridge] global camera RGB-D is empty", flush=True)
+                    global_diagnostic_printed = True
+                last_global_rgb_time = world.current_time
             frames += 1
             if args.test_frames and frames >= args.test_frames:
                 break
@@ -1528,12 +1726,18 @@ def main() -> int:
         ).get()
         if not render_product:
             raise RuntimeError("wrist camera render product was not created")
-        print(
-            "[bridge] camera publishers ready: "
-            "/wrist_camera/image_raw, /wrist_camera/depth/image_raw, "
-            "/wrist_camera/depth/camera_info",
-            flush=True,
-        )
+        if args.rgb_from_active_viewport:
+            print(
+                "[bridge] semantic target publishers ready: "
+                "/yolo/global_target_pose, /yolo/target_pose",
+                flush=True,
+            )
+        else:
+            print(
+                "[bridge] camera publishers ready: /wrist_camera/image_raw, "
+                "/wrist_camera/depth/image_raw, /wrist_camera/depth/camera_info",
+                flush=True,
+            )
         print(f"[bridge] completed {frames} simulation frames", flush=True)
         ros_executor.shutdown()
         trajectory_node.destroy_node()

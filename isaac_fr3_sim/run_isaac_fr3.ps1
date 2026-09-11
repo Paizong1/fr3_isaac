@@ -11,6 +11,7 @@ param(
   [switch]$StableGraspDemo,
   [switch]$BilateralGraspDemo,
   [switch]$FrictionGrasp,
+  [switch]$StartupTracking,
   [switch]$UseActiveViewportRgb
 )
 
@@ -27,6 +28,7 @@ if ($Ros2) {
   if ($StableGraspDemo) { $runnerArgs += '--stable-grasp-demo' }
   if ($BilateralGraspDemo) { $runnerArgs += '--bilateral-grasp-demo' }
   if ($FrictionGrasp) { $runnerArgs += '--friction-grasp' }
+  if ($StartupTracking) { $runnerArgs += '--startup-tracking' }
   & $IsaacPython @runnerArgs
 } else {
   & $IsaacPython (Join-Path $PSScriptRoot 'scripts\run_fr3_native.py') --asset $Asset
