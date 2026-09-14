@@ -480,6 +480,12 @@ int main(int argc, char ** argv)
   const bool staged_lift_enable = declare_or_get_parameter<bool>(node, "staged_lift_enable", false);
   const double staged_lift_first_step = declare_or_get_parameter<double>(node, "staged_lift_first_step", 0.02);
   const int staged_lift_pause_ms = declare_or_get_parameter<int>(node, "staged_lift_pause_ms", 800);
+  const bool place_after_lift_enable = declare_or_get_parameter<bool>(node, "place_after_lift_enable", false);
+  const double place_x = declare_or_get_parameter<double>(node, "place_x", 0.15);
+  const double place_y = declare_or_get_parameter<double>(node, "place_y", -0.55);
+  const double place_release_z = declare_or_get_parameter<double>(node, "place_release_z", 0.09);
+  const double place_approach_z = declare_or_get_parameter<double>(node, "place_approach_z", 0.20);
+  const int place_settle_ms = declare_or_get_parameter<int>(node, "place_settle_ms", 1000);
 
   const double pregrasp_z_offset = declare_or_get_parameter<double>(node, "pregrasp_z_offset", 0.08);
   const double grasp_z_offset = declare_or_get_parameter<double>(node, "grasp_z_offset", 0.010);
@@ -2056,6 +2062,91 @@ int main(int argc, char ** argv)
       report_tcp_z_error(
         node, arm, eef_link, static_cast<double>(lift_pose_actual.position.z));
       publish_grasp_state("lifted", "lift_complete");
+
+      if (place_after_lift_enable) {
+        geometry_msgs::msg::Pose preplace_pose = arm.getCurrentPose(eef_link).pose;
+        preplace_pose.position.x = place_x;
+        preplace_pose.position.y = place_y;
+        preplace_pose.position.z = std::max(place_approach_z, place_release_z);
+
+        arm.setMaxVelocityScalingFactor(std::max(0.0, std::min(1.0, lift_vel_scale)));
+        arm.setMaxAccelerationScalingFactor(std::max(0.0, std::min(1.0, lift_acc_scale)));
+        arm.setStartStateToCurrentState();
+        arm.clearPoseTargets();
+        arm.setPoseTarget(preplace_pose, eef_link);
+        moveit::planning_interface::MoveGroupInterface::Plan preplace_plan;
+        moveit::core::MoveItErrorCode preplace_ret = moveit::core::MoveItErrorCode::FAILURE;
+        if (!plan_best_of_n(
+              node, arm, best_of_plans, best_plan_metric, wrap_joints,
+              preplace_plan, preplace_ret, best_of_time_budget_sec) ||
+            preplace_ret != moveit::core::MoveItErrorCode::SUCCESS ||
+            !execute_plan(node, arm, preplace_plan)) {
+          finish_fail("preplace_failed");
+          return;
+        }
+
+        publish_grasp_state("placing", "descending_into_box");
+        if (!descend_eef_to_z(
+              node, arm, robot_model, arm_group, eef_link, place_release_z, min_eef_z,
+              eef_step, min_fraction, avoid_collisions, lift_vel_scale, lift_acc_scale,
+              current_state_timeout, "Place banana")) {
+          finish_fail("place_descent_failed");
+          return;
+        }
+
+        if (use_direct_gripper_action) {
+          if (!send_gripper_action(
+                node, gripper_client, gripper_open_pos, gripper_max_effort,
+                std::chrono::milliseconds(std::max(1000, gripper_action_timeout_ms)),
+                gripper_wait_result, gripper_timeout_is_success)) {
+            finish_fail("place_release_failed");
+            return;
+          }
+        } else {
+          gripper->setStartStateToCurrentState();
+          gripper->setNamedTarget(gripper_open_named_target);
+          moveit::planning_interface::MoveGroupInterface::Plan open_plan;
+          if (gripper->plan(open_plan) != moveit::core::MoveItErrorCode::SUCCESS ||
+              !execute_plan(node, *gripper, open_plan)) {
+            finish_fail("place_release_failed");
+            return;
+          }
+        }
+        if (place_settle_ms > 0) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(place_settle_ms));
+        }
+        publish_grasp_state("placed", "released_in_box");
+
+        arm.setStartStateToCurrentState();
+        arm.clearPoseTargets();
+        arm.setPoseTarget(preplace_pose, eef_link);
+        moveit::planning_interface::MoveGroupInterface::Plan retreat_plan;
+        if (arm.plan(retreat_plan) != moveit::core::MoveItErrorCode::SUCCESS ||
+            !execute_plan(node, arm, retreat_plan)) {
+          finish_fail("post_place_retreat_failed");
+          return;
+        }
+
+        const auto * arm_jmg = robot_model->getJointModelGroup(arm_group);
+        if (!arm_jmg) {
+          finish_fail("initial_pose_group_missing");
+          return;
+        }
+        std::vector<double> initial_arm_positions;
+        start_state.copyJointGroupPositions(arm_jmg, initial_arm_positions);
+        arm.setMaxVelocityScalingFactor(std::max(0.0, std::min(1.0, vel_scale)));
+        arm.setMaxAccelerationScalingFactor(std::max(0.0, std::min(1.0, acc_scale)));
+        arm.setStartStateToCurrentState();
+        arm.clearPoseTargets();
+        arm.setJointValueTarget(initial_arm_positions);
+        moveit::planning_interface::MoveGroupInterface::Plan return_plan;
+        if (arm.plan(return_plan) != moveit::core::MoveItErrorCode::SUCCESS ||
+            !execute_plan(node, arm, return_plan)) {
+          finish_fail("return_to_initial_pose_failed");
+          return;
+        }
+        publish_grasp_state("completed", "returned_to_initial_pose");
+      }
 
       if (execute_once) {
         done.store(true);

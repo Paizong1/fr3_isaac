@@ -1,9 +1,9 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from moveit_configs_utils import MoveItConfigsBuilder
 import os
 import yaml
@@ -38,7 +38,7 @@ def generate_launch_description():
     refine_at_pregrasp_cartesian_arg = DeclareLaunchArgument("refine_at_pregrasp_cartesian", default_value="true")
     refine_at_pregrasp_min_xy_arg = DeclareLaunchArgument("refine_at_pregrasp_min_xy", default_value="0.004")
     closed_loop_max_iterations_arg = DeclareLaunchArgument("closed_loop_max_iterations", default_value="5")
-    closed_loop_xyz_tolerance_arg = DeclareLaunchArgument("closed_loop_xyz_tolerance", default_value="0.007")
+    closed_loop_xyz_tolerance_arg = DeclareLaunchArgument("closed_loop_xyz_tolerance", default_value="0.015")
     closed_loop_orientation_tolerance_arg = DeclareLaunchArgument(
         "closed_loop_orientation_tolerance", default_value="0.05"
     )
@@ -57,7 +57,7 @@ def generate_launch_description():
     target_z_offset_arg = DeclareLaunchArgument("target_z_offset", default_value="0.02")
     target_z_override_arg = DeclareLaunchArgument("target_z_override", default_value="nan")
 
-    pregrasp_z_offset_arg = DeclareLaunchArgument("pregrasp_z_offset", default_value="0.08")
+    pregrasp_z_offset_arg = DeclareLaunchArgument("pregrasp_z_offset", default_value="0.12")
     grasp_z_offset_arg = DeclareLaunchArgument("grasp_z_offset", default_value="0.010")
     finger_tip_z_offset_arg = DeclareLaunchArgument("finger_tip_z_offset", default_value="0.010")
     lift_z_offset_arg = DeclareLaunchArgument("lift_z_offset", default_value="0.18")
@@ -89,7 +89,7 @@ def generate_launch_description():
     planning_attempts_arg = DeclareLaunchArgument("planning_attempts", default_value="5")
     planning_pipeline_id_arg = DeclareLaunchArgument("planning_pipeline_id", default_value="ompl")
 
-    vel_scale_arg = DeclareLaunchArgument("vel_scale", default_value="0.5")
+    vel_scale_arg = DeclareLaunchArgument("vel_scale", default_value="0.7")
     acc_scale_arg = DeclareLaunchArgument("acc_scale", default_value="0.5")
     lift_vel_scale_arg = DeclareLaunchArgument("lift_vel_scale", default_value="0.05")
     lift_acc_scale_arg = DeclareLaunchArgument("lift_acc_scale", default_value="0.02")
@@ -119,13 +119,19 @@ def generate_launch_description():
     gripper_close_step_delay_ms_arg = DeclareLaunchArgument("gripper_close_step_delay_ms", default_value="350")
     gripper_wait_result_arg = DeclareLaunchArgument("gripper_wait_result", default_value="true")
     gripper_timeout_is_success_arg = DeclareLaunchArgument("gripper_timeout_is_success", default_value="true")
-    require_gripper_stall_arg = DeclareLaunchArgument("require_gripper_stall", default_value="false")
+    require_gripper_stall_arg = DeclareLaunchArgument("require_gripper_stall", default_value="true")
     pre_gripper_close_pause_ms_arg = DeclareLaunchArgument("pre_gripper_close_pause_ms", default_value="800")
     post_gripper_close_settle_ms_arg = DeclareLaunchArgument("post_gripper_close_settle_ms", default_value="800")
-    lift_after_close_enable_arg = DeclareLaunchArgument("lift_after_close_enable", default_value="false")
+    lift_after_close_enable_arg = DeclareLaunchArgument("lift_after_close_enable", default_value="true")
     staged_lift_enable_arg = DeclareLaunchArgument("staged_lift_enable", default_value="false")
     staged_lift_first_step_arg = DeclareLaunchArgument("staged_lift_first_step", default_value="0.02")
     staged_lift_pause_ms_arg = DeclareLaunchArgument("staged_lift_pause_ms", default_value="0")
+    place_after_lift_enable_arg = DeclareLaunchArgument("place_after_lift_enable", default_value="true")
+    place_x_arg = DeclareLaunchArgument("place_x", default_value="0.15")
+    place_y_arg = DeclareLaunchArgument("place_y", default_value="-0.55")
+    place_release_z_arg = DeclareLaunchArgument("place_release_z", default_value="0.09")
+    place_approach_z_arg = DeclareLaunchArgument("place_approach_z", default_value="0.20")
+    place_settle_ms_arg = DeclareLaunchArgument("place_settle_ms", default_value="1000")
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     start_move_group = LaunchConfiguration("start_move_group")
@@ -175,6 +181,20 @@ def generate_launch_description():
             {"use_sim_time": use_sim_time},
         ],
         condition=IfCondition(start_move_group),
+    )
+
+    proxy_dir = os.path.join(
+        get_package_prefix("fairino3_v6_moveit2_config"),
+        "lib",
+        "fairino3_v6_moveit2_config",
+    )
+    trajectory_proxy = ExecuteProcess(
+        cmd=["python3", os.path.join(proxy_dir, "trajectory_action_proxy.py")],
+        output="screen",
+    )
+    gripper_proxy = ExecuteProcess(
+        cmd=["python3", os.path.join(proxy_dir, "gripper_action_proxy.py")],
+        output="screen",
     )
 
     pick_node = Node(
@@ -274,6 +294,12 @@ def generate_launch_description():
                 "staged_lift_enable": LaunchConfiguration("staged_lift_enable"),
                 "staged_lift_first_step": LaunchConfiguration("staged_lift_first_step"),
                 "staged_lift_pause_ms": LaunchConfiguration("staged_lift_pause_ms"),
+                "place_after_lift_enable": LaunchConfiguration("place_after_lift_enable"),
+                "place_x": LaunchConfiguration("place_x"),
+                "place_y": LaunchConfiguration("place_y"),
+                "place_release_z": LaunchConfiguration("place_release_z"),
+                "place_approach_z": LaunchConfiguration("place_approach_z"),
+                "place_settle_ms": LaunchConfiguration("place_settle_ms"),
             },
         ],
     )
@@ -363,6 +389,14 @@ def generate_launch_description():
             staged_lift_enable_arg,
             staged_lift_first_step_arg,
             staged_lift_pause_ms_arg,
+            place_after_lift_enable_arg,
+            place_x_arg,
+            place_y_arg,
+            place_release_z_arg,
+            place_approach_z_arg,
+            place_settle_ms_arg,
+            trajectory_proxy,
+            gripper_proxy,
             move_group_node,
             pick_node,
         ]

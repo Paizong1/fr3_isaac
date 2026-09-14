@@ -24,6 +24,7 @@ STATE_MAX_AGE_SEC = 5.0
 # aborting the subsequent TCP closed-loop correction.
 FINAL_TOLERANCE_RAD = 0.05
 SETTLE_SIM_TIME_SEC = 0.5
+MAX_WIRE_POINTS = 80
 
 
 def retime_points(point_times, duration):
@@ -32,6 +33,21 @@ def retime_points(point_times, duration):
     first_time = max(0.1, point_times[0])
     motion_scale = (duration - first_time) / (point_times[-1] - point_times[0])
     return [first_time + (point_time - point_times[0]) * motion_scale for point_time in point_times]
+
+
+def downsample_points(points, limit=MAX_WIRE_POINTS):
+    if len(points) <= limit:
+        return list(points)
+    return [points[round(index * (len(points) - 1) / (limit - 1))] for index in range(limit)]
+
+
+def run_retime_self_test():
+    retimed = retime_points([0.0, 0.05, 1.0], 1.1)
+    assert math.isclose(retimed[0], 0.1)
+    assert all(left < right for left, right in zip(retimed, retimed[1:]))
+    sampled = downsample_points(list(range(200)))
+    assert len(sampled) == MAX_WIRE_POINTS and sampled[0] == 0 and sampled[-1] == 199
+    assert all(left < right for left, right in zip(sampled, sampled[1:]))
 
 
 class TrajectoryActionProxy:
@@ -128,15 +144,8 @@ class TrajectoryActionProxy:
         wire_trajectory.joint_names = list(trajectory.joint_names)
         wire_trajectory.points = [
             JointTrajectoryPoint(positions=list(point.positions), time_from_start=point.time_from_start)
-            for point in trajectory.points
+            for point in downsample_points(trajectory.points)
         ]
-        first_time = (
-            wire_trajectory.points[0].time_from_start.sec
-            + wire_trajectory.points[0].time_from_start.nanosec * 1e-9
-        )
-        if first_time <= 1e-6:
-            wire_trajectory.points[0].time_from_start.sec = 0
-            wire_trajectory.points[0].time_from_start.nanosec = 100_000_000
         if not wire_trajectory.points:
             point = trajectory.points[-1]
             wire_trajectory.points = [
@@ -180,7 +189,7 @@ class TrajectoryActionProxy:
             previous_time = point_time
         final_target = ", ".join(f"{name}={target[name]:.4f}" for name in trajectory.joint_names)
         print(
-            f"[trajectory] queued continuous trajectory ({len(trajectory.points)} -> {len(wire_trajectory.points)}), "
+            f"[trajectory] queued bounded trajectory ({len(trajectory.points)} -> {len(wire_trajectory.points)}), "
             f"duration={duration:.3f}s sim-time, "
             f"final_target=[{final_target}]",
             flush=True,
@@ -241,6 +250,7 @@ class TrajectoryActionProxy:
 
 
 def main():
+    run_retime_self_test()
     parser = argparse.ArgumentParser()
     parser.add_argument("--action", default="/fairino3_controller/follow_joint_trajectory")
     parser.add_argument("--trajectory-topic", default="/fairino3_controller/joint_trajectory")

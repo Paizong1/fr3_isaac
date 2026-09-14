@@ -11,7 +11,7 @@ import traceback
 ARM_JOINTS = ("j1", "j2", "j3", "j4", "j5", "j6")
 MAX_SAFE_ARM_ABS_RAD = 2.0 * math.pi
 ACTUAL_LIMIT_GRACE_RAD = 0.1
-J2_COMPENSATION_DEADBAND_RAD = 0.01
+TRAJECTORY_BOUNDARY_BLEND_SEC = 0.45
 JOINT_TRAJECTORY_TOPIC = "/fairino3_controller/joint_trajectory"
 GRIPPER_MASTER_JOINT = "robotiq_85_left_knuckle_joint"
 GRIPPER_COMMAND_TOPIC = "/robotiq_gripper_controller/position_command"
@@ -59,7 +59,7 @@ class TrajectoryExecutor:
         self.start_time = None
         self.start_positions = None
         self.points = ()
-        self.j2_compensation = 0.0
+        self.boundary_offset = (0.0,) * len(ARM_JOINTS)
         self.new_trajectory = False
 
     def submit(self, message, now, current_positions, append=False):
@@ -74,18 +74,14 @@ class TrajectoryExecutor:
         queue_active = append and self.points and now < self.start_time + self.points[-1][0]
         self.new_trajectory = not queue_active
         if not queue_active:
-            if self.points:
-                previous_j2 = self.points[-1][1][ARM_JOINTS.index("j2")]
-                actual_j2 = float(current_positions[ARM_JOINTS.index("j2")])
-                correction = previous_j2 - actual_j2
-                self.j2_compensation = (
-                    max(-0.03, min(0.03, correction))
-                    if abs(correction) >= J2_COMPENSATION_DEADBAND_RAD else 0.0
-                )
-            else:
-                self.j2_compensation = 0.0
+            previous_target = self.target_at(now)
+            self.boundary_offset = tuple(
+                target - float(actual)
+                for target, actual in zip(previous_target, current_positions)
+            ) if previous_target is not None else (0.0,) * len(ARM_JOINTS)
 
         order = [names.index(name) for name in ARM_JOINTS]
+        offset = self.points[-1][0] if queue_active else 0.0
         points = []
         previous_time = -1.0
         for point in message.points:
@@ -95,7 +91,6 @@ class TrajectoryExecutor:
             if len(point.positions) != len(ARM_JOINTS):
                 return "each point must contain six position targets"
             positions = [float(point.positions[index]) for index in order]
-            positions[ARM_JOINTS.index("j2")] += self.j2_compensation
             positions = tuple(positions)
             if not all(math.isfinite(position) for position in positions):
                 return "position targets must be finite"
@@ -109,7 +104,6 @@ class TrajectoryExecutor:
             previous_time = point_time
 
         if queue_active:
-            offset = self.points[-1][0]
             self.points += tuple((offset + point_time, positions) for point_time, positions in points)
         else:
             self.start_time = now
@@ -122,6 +116,7 @@ class TrajectoryExecutor:
             return None
         elapsed = max(0.0, now - self.start_time)
         knots = ((0.0, self.start_positions),) + self.points
+        target = self.points[-1][1]
         for index, ((left_time, left_positions), (right_time, right_positions)) in enumerate(
             zip(knots, knots[1:])
         ):
@@ -129,7 +124,7 @@ class TrajectoryExecutor:
                 previous = knots[index - 1] if index else None
                 following = knots[index + 2] if index + 2 < len(knots) else None
                 duration = right_time - left_time
-                return self._interpolate(
+                target = self._interpolate(
                     left_positions,
                     right_positions,
                     self._knot_velocity(previous, (left_time, left_positions), (right_time, right_positions)),
@@ -137,7 +132,12 @@ class TrajectoryExecutor:
                     duration,
                     (elapsed - left_time) / duration,
                 )
-        return self.points[-1][1]
+                break
+        blend = max(0.0, 1.0 - elapsed / TRAJECTORY_BOUNDARY_BLEND_SEC)
+        return tuple(
+            position + offset * blend
+            for position, offset in zip(target, self.boundary_offset)
+        )
 
     @staticmethod
     def _knot_velocity(previous, current, following):
@@ -262,17 +262,18 @@ def run_trajectory_self_test() -> None:
     class SinglePointMessage:
         joint_names = list(ARM_JOINTS)
 
-        def __init__(self, positions):
-            self.points = [Point(positions, 1.0)]
+        def __init__(self, positions, seconds=1.0):
+            self.points = [Point(positions, seconds)]
 
     queued = TrajectoryExecutor({name: (-10.0, 10.0) for name in ARM_JOINTS})
     assert queued.submit(SinglePointMessage([1] * 6), 20.0, [0.0] * 6) is None
     assert queued.submit(SinglePointMessage([2] * 6), 20.0, [0.0] * 6, append=True) is None
     assert queued.target_at(21.5) == (1.625,) * 6
-    assert queued.submit(SinglePointMessage([2] * 6), 23.0, [2.0, 2.012, 2.0, 2.0, 2.0, 2.0], append=True) is None
-    assert math.isclose(queued.points[-1][1][1], 1.988, abs_tol=1e-12)
-    assert queued.submit(SinglePointMessage([2] * 6), 25.0, [2.0, 1.996, 2.0, 2.0, 2.0, 2.0], append=True) is None
-    assert queued.points[-1][1][1] == 2.0
+    assert queued.submit(SinglePointMessage([2] * 6, 0.1), 23.0, [2.0, 2.012, 2.0, 2.0, 2.0, 2.0], append=True) is None
+    assert math.isclose(queued.target_at(23.0)[1], 2.0, abs_tol=1e-12)
+    assert math.isclose(queued.target_at(23.225)[1], 1.994, abs_tol=1e-12)
+    assert queued.target_at(23.45) == (2.0,) * 6
+    assert queued.points[-1][1] == (2.0,) * 6
     Message.joint_names = [*ARM_JOINTS[:-1], "robotiq_85_left_knuckle_joint"]
     assert executor.submit(Message(), 12.0, [0.0] * 6) is not None
     gripper = GripperRamp(max_velocity=GRIPPER_COMMAND_VELOCITY_RAD_S)
@@ -367,6 +368,34 @@ GLOBAL_CAMERA_LOOK_AT = (-0.14, -0.58, 0.03)
 GLOBAL_CAMERA_RESOLUTION = (320, 240)
 GLOBAL_CAMERA_TICK_RATE = 2.0
 GLOBAL_GRASP_REFERENCE_OFFSET_BASE = (-0.0143, -0.0049, 0.0080)
+PLACE_BOX_CENTER = (0.15, -0.55)
+PLACE_BOX_SIZE = (0.18, 0.12)
+
+
+def create_place_box(stage) -> None:
+    """Draw a blue, collision-free rectangle on the z=0 ground plane."""
+    from pxr import Gf, UsdGeom
+
+    root = "/World/PlaceBox"
+    UsdGeom.Xform.Define(stage, root)
+    width, height = PLACE_BOX_SIZE
+    thickness = 0.006
+    z = 0.0015
+    bars = (
+        ("top", (PLACE_BOX_CENTER[0], PLACE_BOX_CENTER[1] + height / 2, z), (width / 2, thickness / 2, z)),
+        ("bottom", (PLACE_BOX_CENTER[0], PLACE_BOX_CENTER[1] - height / 2, z), (width / 2, thickness / 2, z)),
+        ("left", (PLACE_BOX_CENTER[0] - width / 2, PLACE_BOX_CENTER[1], z), (thickness / 2, height / 2, z)),
+        ("right", (PLACE_BOX_CENTER[0] + width / 2, PLACE_BOX_CENTER[1], z), (thickness / 2, height / 2, z)),
+    )
+    for name, position, scale in bars:
+        bar = UsdGeom.Cube.Define(stage, f"{root}/{name}")
+        bar.AddTranslateOp().Set(Gf.Vec3d(*position))
+        bar.AddScaleOp().Set(Gf.Vec3d(*scale))
+        bar.CreateDisplayColorAttr([(0.05, 0.25, 0.95)])
+    print(
+        f"[bridge] place box: center={PLACE_BOX_CENTER}, size={PLACE_BOX_SIZE}, ground_z=0.0",
+        flush=True,
+    )
 
 
 def configure_scene_collisions(
@@ -646,6 +675,7 @@ def main() -> int:
             stage, args.freeze_banana, not args.disable_scene_collisions, args.banana_contact_proxy,
             args.stable_grasp_demo, args.bilateral_grasp_demo
         )
+        create_place_box(stage)
         if args.friction_grasp:
             configure_friction_grasp_solver(stage)
         if not args.keep_light_shadows:
@@ -949,9 +979,14 @@ def main() -> int:
                 if error:
                     print(f"[bridge] rejected {args.trajectory_topic}: {error}", flush=True)
                 elif executor.new_trajectory:
-                    if abs(executor.j2_compensation) >= 1e-6:
+                    if max(map(abs, executor.boundary_offset)) >= 1e-6:
                         print(
-                            f"[bridge] j2 tracking compensation: {executor.j2_compensation:+.4f} rad",
+                            "[bridge] trajectory boundary blend: "
+                            + ", ".join(
+                                f"{name}={offset:+.4f}"
+                                for name, offset in zip(ARM_JOINTS, executor.boundary_offset)
+                            )
+                            + f" rad over {TRAJECTORY_BOUNDARY_BLEND_SEC:.2f}s",
                             flush=True,
                         )
                     final_target = ", ".join(
@@ -1317,8 +1352,16 @@ def main() -> int:
                         for name, goal, bias in zip(ARM_JOINTS, target, tracking_bias)
                     )
                 else:
-                    tracking_bias = (0.0,) * len(ARM_JOINTS)
-                    control_target = target
+                    tracking_bias = update_tracking_bias(
+                        (0.0,) * len(ARM_JOINTS),
+                        (0.0,) * len(ARM_JOINTS),
+                        tracking_bias,
+                        world.current_time - previous_sim_time,
+                    )
+                    control_target = tuple(
+                        max(arm_limits[name][0], min(arm_limits[name][1], goal + bias))
+                        for name, goal, bias in zip(ARM_JOINTS, target, tracking_bias)
+                    )
                 articulation.set_joint_position_targets(control_target, joint_indices=arm_indices)
             else:
                 tracking_bias = update_tracking_bias(

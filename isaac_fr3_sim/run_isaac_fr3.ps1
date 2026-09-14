@@ -4,15 +4,15 @@ param(
   [string]$Asset = '',
   [int]$CameraWidth = 640,
   [int]$CameraHeight = 480,
-  [double]$CameraTickRate = 1.0,
-  [switch]$Ros2,
+  [double]$CameraTickRate = 10.0,
+  [switch]$Ros2 = $true,
   [switch]$FreezeBanana,
-  [switch]$BananaContactProxy,
+  [switch]$BananaContactProxy = $true,
   [switch]$StableGraspDemo,
   [switch]$BilateralGraspDemo,
-  [switch]$FrictionGrasp,
+  [switch]$FrictionGrasp = $true,
   [switch]$StartupTracking,
-  [switch]$UseActiveViewportRgb
+  [switch]$UseActiveViewportRgb = $true
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +20,7 @@ if (-not $Asset) {
   $Asset = Join-Path $PSScriptRoot 'assets\fairino3_robotiq_complete.usd'
 }
 if ($Ros2) {
+  wsl.exe -d Ubuntu-22.04 -u paizong -- true | Out-Null
   . (Join-Path $PSScriptRoot 'setup_isaac_ros2_env.ps1') -IsaacRoot (Split-Path $IsaacPython -Parent) -DomainId $DomainId
   $runnerArgs = @((Join-Path $PSScriptRoot 'scripts\run_fr3_scene.py'), '--asset', $Asset, '--domain-id', $DomainId, '--camera-width', $CameraWidth, '--camera-height', $CameraHeight, '--camera-tick-rate', $CameraTickRate)
   if ($UseActiveViewportRgb) { $runnerArgs += '--rgb-from-active-viewport' }

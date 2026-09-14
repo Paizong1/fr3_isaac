@@ -39,4 +39,8 @@ install(DIRECTORY launch DESTINATION share/${PROJECT_NAME}
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(FILES .setup_assistant DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS scripts/yolov8_overlay_node.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../isaac_fr3_sim/scripts/trajectory_action_proxy.py
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../isaac_fr3_sim/scripts/gripper_action_proxy.py
+  DESTINATION lib/${PROJECT_NAME})
 install(TARGETS pick_banana_node DESTINATION lib/${PROJECT_NAME})
